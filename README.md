@@ -6,33 +6,45 @@ A macOS menu bar plugin that shows your Cursor IDE usage at a glance: included r
 
 - **macOS** (Catalina 10.15+)
 - **Cursor IDE** — must be installed and signed in at least once
+- **[SwiftBar](https://github.com/swiftbar/SwiftBar)**
 
 ## Installation
 
-### Option A: Homebrew
-
-```bash
-brew tap edison-cc/tap
-brew install cursor-usage
-```
-
-SwiftBar is installed automatically as a dependency. After install, launch SwiftBar and point it to `~/swiftbar-plugins`:
-
-```bash
-open -a SwiftBar
-```
-
-The plugin is already linked and will appear in the menu bar on next refresh.
-
-### Option B: Manual
-
-1. Install [SwiftBar](https://github.com/swiftbar/SwiftBar):
+First, install SwiftBar if you haven't already:
 
 ```bash
 brew install --cask swiftbar
 ```
 
-2. Clone this repo and link the plugin:
+Then pick one of the options below to install the plugin.
+
+### Option A: Quick Install (gh CLI)
+
+Requires the [GitHub CLI](https://cli.github.com/) already authenticated (`gh auth login`). No PAT needed.
+
+```bash
+mkdir -p ~/swiftbar-plugins
+gh api repos/edison-cc/cursor-usage/contents/cursor-usage.5m.sh \
+  --jq '.content' | base64 -d > ~/swiftbar-plugins/cursor-usage.5m.sh
+chmod +x ~/swiftbar-plugins/cursor-usage.5m.sh
+```
+
+### Option B: Quick Install (curl + PAT)
+
+Requires a GitHub Personal Access Token with read access to this repo.
+
+```bash
+mkdir -p ~/swiftbar-plugins
+curl -fsSL \
+  -H "Authorization: token YOUR_GITHUB_PAT" \
+  https://raw.githubusercontent.com/edison-cc/cursor-usage/main/cursor-usage.5m.sh \
+  -o ~/swiftbar-plugins/cursor-usage.5m.sh
+chmod +x ~/swiftbar-plugins/cursor-usage.5m.sh
+```
+
+### Option C: Clone + Symlink
+
+Best for development or easy updates via `git pull`.
 
 ```bash
 git clone https://github.com/edison-cc/cursor-usage.git
@@ -41,11 +53,9 @@ mkdir -p ~/swiftbar-plugins
 ln -sf "$(pwd)/cursor-usage.5m.sh" ~/swiftbar-plugins/cursor-usage.5m.sh
 ```
 
-3. Launch SwiftBar and select `~/swiftbar-plugins` as the plugin directory:
+### After installing
 
-```bash
-open -a SwiftBar
-```
+Launch SwiftBar and select `~/swiftbar-plugins` as the plugin directory. You can open SwiftBar from the terminal (`open -a SwiftBar`), the Applications folder, or Spotlight (Cmd+Space and type "SwiftBar"):
 
 If SwiftBar is already running and you need to change the directory:
 
@@ -57,23 +67,12 @@ Then restart SwiftBar.
 
 The plugin will run immediately and refresh every **5 minutes** (based on the `5m` in the filename).
 
-<!-- Future: ### Option C: npm
-```bash
-npm install -g @edison-cc/cursor-usage
-``` -->
-
 ## Testing
 
 Run the test script to verify API connectivity and auth without SwiftBar:
 
 ```bash
 bash test-cursor-usage.sh
-```
-
-After Homebrew install, the test script is also available at:
-
-```bash
-bash "$(brew --prefix)/share/cursor-usage/test-cursor-usage.sh"
 ```
 
 This calls the same Cursor APIs as the plugin and prints a plain-text summary. If you see your usage data, everything is working correctly.
@@ -91,7 +90,6 @@ mv cursor-usage.5m.sh cursor-usage.1h.sh    # every hour
 ```
 
 Supported suffixes: `s` (seconds), `m` (minutes), `h` (hours), `d` (days).
-
 
 ## Troubleshooting
 
