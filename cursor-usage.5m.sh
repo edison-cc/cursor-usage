@@ -75,7 +75,6 @@ membership = stripe.get("membershipType", "unknown")
 # Find own spend in team data
 spend_cents = 0
 limit_dollars = 0
-included_cents = 0
 has_spend = False
 
 members = spend_data.get("teamMemberSpend", [])
@@ -84,11 +83,11 @@ if me and "spendCents" in me:
     has_spend = True
     spend_cents = me["spendCents"]
     limit_dollars = me.get("effectivePerUserLimitDollars", me.get("hardLimitOverrideDollars", 0))
-    included_cents = me.get("includedSpendCents", 0)
 
 spend_dollars = spend_cents / 100
-included_dollars = included_cents / 100
-req_pct = (used / total * 100) if total else 0
+quota_reached = (total > 0 and used >= total) or (has_spend and spend_cents > 0)
+display_used = total if quota_reached else used
+req_pct = (display_used / total * 100) if total else 0
 spend_pct = (spend_dollars / limit_dollars * 100) if limit_dollars else 0
 
 # Color logic
@@ -103,7 +102,7 @@ req_color = pct_color(req_pct)
 spend_color = pct_color(spend_pct) if has_spend else "#4CAF50"
 
 # Menu bar line (always visible)
-parts = [f"{used}/{total}"]
+parts = [f"{display_used}/{total}"]
 if has_spend:
     parts.append(f"${spend_dollars:.2f}/${limit_dollars:.0f}")
 bar_text = " · ".join(parts)
@@ -133,7 +132,7 @@ print("---")
 # Included requests
 req_bar = "█" * int(20 * min(req_pct, 100) / 100) + "░" * (20 - int(20 * min(req_pct, 100) / 100))
 print(f"Included Requests | size=13")
-print(f"  {used} / {total}  ({req_pct:.0f}%) | color={req_color} size=13 font=Menlo")
+print(f"  {display_used} / {total}  ({req_pct:.0f}%) | color={req_color} size=13 font=Menlo")
 print(f"  {req_bar} | size=11 font=Menlo color={req_color}")
 print(f"  Tokens: {tokens:,} | color=#888888 size=12 font=Menlo")
 
@@ -144,7 +143,6 @@ if has_spend:
     print(f"On-Demand Usage | size=13")
     print(f"  ${spend_dollars:.2f} / ${limit_dollars:.0f}  ({spend_pct:.0f}%) | color={spend_color} size=13 font=Menlo")
     print(f"  {spend_bar} | size=11 font=Menlo color={spend_color}")
-    print(f"  Included value: ${included_dollars:.2f} | color=#888888 size=12 font=Menlo")
 
 print("---")
 print("Open Cursor Settings | href=https://cursor.com/settings size=13")

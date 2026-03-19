@@ -94,23 +94,30 @@ if start_str:
         pass
 
 bar_len = 30
-req_pct = (used / total * 100) if total else 0
-filled = int(bar_len * min(req_pct, 100) / 100)
-req_bar = "█" * filled + "░" * (bar_len - filled)
-
-print()
-print(f"Included Requests:  {used} / {total}")
-print(f"  [{req_bar}] {req_pct:.0f}%")
-print(f"  Tokens used: {tokens:,}")
 
 # On-demand spend (enterprise/team plans only)
 members = spend_data.get("teamMemberSpend", [])
 me = next((m for m in members if m.get("email", "").lower() == email.lower()), None)
-
+spend_cents = 0
+has_spend = False
 if me and "spendCents" in me:
-    spend_dollars = me["spendCents"] / 100
+    has_spend = True
+    spend_cents = me["spendCents"]
+
+quota_reached = (total > 0 and used >= total) or (has_spend and spend_cents > 0)
+display_used = total if quota_reached else used
+req_pct = (display_used / total * 100) if total else 0
+filled = int(bar_len * min(req_pct, 100) / 100)
+req_bar = "█" * filled + "░" * (bar_len - filled)
+
+print()
+print(f"Included Requests:  {display_used} / {total}")
+print(f"  [{req_bar}] {req_pct:.0f}%")
+print(f"  Tokens used: {tokens:,}")
+
+if has_spend:
+    spend_dollars = spend_cents / 100
     limit_dollars = me.get("effectivePerUserLimitDollars", me.get("hardLimitOverrideDollars", 0))
-    included_dollars = me.get("includedSpendCents", 0) / 100
     spend_pct = (spend_dollars / limit_dollars * 100) if limit_dollars else 0
     filled = int(bar_len * min(spend_pct, 100) / 100)
     spend_bar = "█" * filled + "░" * (bar_len - filled)
@@ -118,7 +125,6 @@ if me and "spendCents" in me:
     print()
     print(f"On-Demand Usage:    ${spend_dollars:.2f} / ${limit_dollars:.0f}")
     print(f"  [{spend_bar}] {spend_pct:.0f}%")
-    print(f"  Included value:   ${included_dollars:.2f}")
 elif me:
     print()
     print("On-Demand Usage:    $0.00 (no on-demand charges yet)")
