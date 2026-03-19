@@ -1,33 +1,6 @@
-# Cursor Usage — SwiftBar Plugin
+# Cursor Usage
 
 A macOS menu bar plugin that shows your Cursor IDE usage at a glance: included requests consumed and on-demand spend.
-
-```
-⚡ 500/500 · $13.60/$150
-```
-
-Click to see the full breakdown:
-
-```
-edison.chen@example.com
-Plan: enterprise
-Cycle: Mar 01 → Apr 01, 2026
-───────────────────────────
-Included Requests
-  500 / 500  (100%)
-  ████████████████████
-  Tokens: 133,944,188
-───────────────────────────
-On-Demand Usage
-  $13.60 / $150  (9%)
-  █░░░░░░░░░░░░░░░░░░░
-  Included value: $19.76
-───────────────────────────
-Open Cursor Settings
-Refresh
-```
-
-Colors change automatically: green (<50%), yellow (50–80%), red (>80%).
 
 ## Prerequisites
 
@@ -36,7 +9,7 @@ Colors change automatically: green (<50%), yellow (50–80%), red (>80%).
 
 ## Installation
 
-### Option A: Homebrew (recommended)
+### Option A: Homebrew
 
 ```bash
 brew tap edison-cc/tap
@@ -119,18 +92,6 @@ mv cursor-usage.5m.sh cursor-usage.1h.sh    # every hour
 
 Supported suffixes: `s` (seconds), `m` (minutes), `h` (hours), `d` (days).
 
-## How It Works
-
-1. **Reads your auth token** from Cursor's local SQLite database at `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
-2. **Calls Cursor's internal APIs** with the token as a session cookie:
-   - `GET /api/usage` — included request count and token usage
-   - `GET /api/auth/stripe` — plan type and team ID
-   - `POST /api/dashboard/get-team-spend` — on-demand spend per user (enterprise/team plans)
-3. **Formats the output** for SwiftBar's text-based protocol
-
-No passwords are stored or transmitted. The script reads the same session token that Cursor IDE already maintains locally.
-
-The plugin depends on `sqlite3`, `curl`, and `python3`, all of which are pre-installed on macOS.
 
 ## Troubleshooting
 
@@ -153,7 +114,3 @@ Click it to see the error in the dropdown. Common causes:
 - Click the plugin in the menu bar and select **Refresh**.
 - Or right-click the SwiftBar icon → Refresh All.
 - The script has a 15-second timeout per API call. On slow networks, it may show stale data from the last successful run.
-
-### On-demand spend not showing
-
-The on-demand section only appears for enterprise/team plans. If you're on a personal Pro plan, only included requests will be shown.

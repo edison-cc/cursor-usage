@@ -1,29 +1,12 @@
 #!/usr/bin/env bash
-# test-cursor-usage.sh — CLI test for the Cursor Usage SwiftBar plugin
-#
-# Calls the same Cursor APIs as cursor-usage.5m.sh and prints a plain-text
-# summary. Use this to verify API connectivity and auth without needing
-# SwiftBar installed.
+# test-cursor-usage.sh — CLI test
 #
 # Usage:
 #   bash test-cursor-usage.sh
 #
 # Prerequisites:
 #   Cursor IDE must be installed and signed in on this machine.
-#
-# Expected output:
-#   === Cursor Usage ===
-#   User:  you@example.com
-#   Plan:  enterprise  (team 12345)
-#   Cycle: Mar 01 → Apr 01, 2026
-#
-#   Included Requests:  500 / 500
-#     [██████████████████████████████] 100%
-#     Tokens used: 133,944,188
-#
-#   On-Demand Usage:    $13.60 / $150
-#     [████░░░░░░░░░░░░░░░░░░░░░░░░░░] 9%
-#     Included value:   $19.76
+
 
 set -euo pipefail
 
