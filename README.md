@@ -72,10 +72,34 @@ The plugin will run immediately and refresh every **5 minutes** (based on the `5
 Run the test script to verify API connectivity and auth without SwiftBar:
 
 ```bash
-bash test-cursor-usage.sh
+bash tests/test-cursor-usage.sh
 ```
 
 This calls the same Cursor APIs as the plugin and prints a plain-text summary. If you see your usage data, everything is working correctly.
+
+## Report
+
+Generate a comprehensive usage report with metrics from both the Cursor API and local database:
+
+```bash
+bash generate-report.sh
+```
+
+The report includes: billing cycle overview, per-turn token distribution, daily activity trends, conversation analytics, AI code attribution, and account info. All output is terminal-based with colored ASCII charts -- no browser or dependencies needed.
+
+Save to a file (colors are automatically disabled when piped):
+
+```bash
+bash generate-report.sh > report.txt
+```
+
+Use `--no-color` to explicitly disable colors:
+
+```bash
+bash generate-report.sh --no-color
+```
+
+For details on all available data sources and metrics, see [docs/data-sources.md](docs/data-sources.md).
 
 ## Customization
 
