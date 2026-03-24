@@ -2,6 +2,16 @@
 
 A macOS menu bar plugin that shows your Cursor IDE usage at a glance: included requests consumed and on-demand spend.
 
+## Demo
+
+The plugin displays your usage summary directly in the macOS menu bar:
+
+![Menubar plugin](docs/assets/cursor-usage-menubar.png)
+
+Click it to see the full breakdown in a dropdown:
+
+![Dropdown detail](docs/assets/cursor-usage-dropdown.png)
+
 ## Prerequisites
 
 - **macOS** (Catalina 10.15+)
