@@ -102,11 +102,7 @@ req_color = pct_color(req_pct)
 spend_color = pct_color(spend_pct) if has_spend else "#4CAF50"
 
 # Menu bar line (always visible)
-overage = max(0, used - total) if total > 0 else 0
-if overage > 0:
-    parts = [f"({total}+{overage})/{total}"]
-else:
-    parts = [f"{used}/{total}"]
+parts = [f"{display_used}/{total}"]
 if has_spend:
     parts.append(f"${spend_dollars:.2f}/${limit_dollars:.0f}")
 bar_text = " · ".join(parts)
