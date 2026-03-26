@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # <xbar.title>Cursor Usage</xbar.title>
 # <xbar.version>v1.0</xbar.version>
-# <xbar.author>Edison Chen</xbar.author>
 # <xbar.desc>Shows Cursor included-request and on-demand usage in the menu bar</xbar.desc>
-# <xbar.dependencies>sqlite3,curl,python3</xbar.dependencies>
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 
@@ -284,5 +282,6 @@ if has_spend:
 
 print("---")
 print("Open Cursor Settings | href=https://cursor.com/settings size=13")
+print("Source Code | href=https://github.com/edison-cc/cursor-usage size=13")
 print("Refresh | refresh=true size=13")
 PYEOF
