@@ -4,13 +4,12 @@ A macOS menu bar plugin that shows your Cursor IDE usage at a glance: included r
 
 ## Demo
 
-The plugin displays your usage summary directly in the macOS menu bar:
+The plugin displays your usage summary directly in the macOS menu bar. The dot color changes based on how much of your quota you've used:
 
-<p><img src="docs/assets/cursor-usage-menubar.png" alt="Menubar plugin" width="380"></p>
-
-Click it to see the full breakdown in a dropdown:
-
-<p><img src="docs/assets/cursor-usage-dropdown.png" alt="Dropdown detail" width="320"></p>
+| Green (< 50%) | Yellow (50–79%) | Red (80%+) |
+|:-:|:-:|:-:|
+| <img src="docs/assets/green-menubar.png" alt="Green menubar" width="90"> | <img src="docs/assets/yellow-menubar.png" alt="Yellow menubar" width="90"> | <img src="docs/assets/red-menubar.png" alt="Red menubar" width="90"> |
+| <img src="docs/assets/green-dropdown.png" alt="Green dropdown" width="280"> | <img src="docs/assets/yellow-dropdown.png" alt="Yellow dropdown" width="280"> | <img src="docs/assets/red-dropdown.png" alt="Red dropdown" width="280"> |
 
 ## Prerequisites
 
