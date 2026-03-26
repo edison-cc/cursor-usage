@@ -126,7 +126,7 @@ Supported suffixes: `s` (seconds), `m` (minutes), `h` (hours), `d` (days).
 
 ## Troubleshooting
 
-### Menu bar shows "⚡ err"
+### Menu bar shows a red dot with "err"
 
 Click it to see the error in the dropdown. Common causes:
 
