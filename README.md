@@ -6,11 +6,11 @@ A macOS menu bar plugin that shows your Cursor IDE usage at a glance: included r
 
 The plugin displays your usage summary directly in the macOS menu bar:
 
-![Menubar plugin](docs/assets/cursor-usage-menubar.png)
+<p><img src="docs/assets/cursor-usage-menubar.png" alt="Menubar plugin" width="380"></p>
 
 Click it to see the full breakdown in a dropdown:
 
-![Dropdown detail](docs/assets/cursor-usage-dropdown.png)
+<p><img src="docs/assets/cursor-usage-dropdown.png" alt="Dropdown detail" width="320"></p>
 
 ## Prerequisites
 
