@@ -27,31 +27,17 @@ brew install --cask swiftbar
 
 Then pick one of the options below to install the plugin.
 
-### Option A: Quick Install (gh CLI)
-
-Requires the [GitHub CLI](https://cli.github.com/) already authenticated (`gh auth login`). No PAT needed.
-
-```bash
-mkdir -p ~/swiftbar-plugins
-gh api repos/edison-cc/cursor-usage/contents/cursor-usage.5m.sh \
-  --jq '.content' | base64 -d > ~/swiftbar-plugins/cursor-usage.5m.sh
-chmod +x ~/swiftbar-plugins/cursor-usage.5m.sh
-```
-
-### Option B: Quick Install (curl + PAT)
-
-Requires a GitHub Personal Access Token with read access to this repo.
+### Option A: Quick Install (curl)
 
 ```bash
 mkdir -p ~/swiftbar-plugins
 curl -fsSL \
-  -H "Authorization: token YOUR_GITHUB_PAT" \
   https://raw.githubusercontent.com/edison-cc/cursor-usage/main/cursor-usage.5m.sh \
   -o ~/swiftbar-plugins/cursor-usage.5m.sh
 chmod +x ~/swiftbar-plugins/cursor-usage.5m.sh
 ```
 
-### Option C: Clone + Symlink
+### Option B: Clone + Symlink
 
 Best for development or easy updates via `git pull`.
 
