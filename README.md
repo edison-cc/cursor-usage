@@ -118,6 +118,17 @@ Click it to see the error in the dropdown. Common causes:
 
 - **"Cursor DB not found"** — Cursor IDE hasn't been opened on this machine, or is installed in a non-standard location.
 - **"No access token"** — You're not signed in to Cursor. Open Cursor, sign in, then click Refresh.
+- **"Keychain access to Cursor Safe Storage was denied"** — see [Keychain prompt](#keychain-prompt) below, then click Refresh.
+- **"Cursor session expired"** — Cursor's API rejected the stored login. Open Cursor (signed in) so it refreshes the token, then click Refresh.
+- **"Invalid Cursor token"** / **"Could not decrypt the Cursor token"** — Sign out of Cursor and back in.
+
+### Keychain prompt
+
+Newer Cursor builds encrypt the stored login token (setting `cursor.storage.authTokenEncryptionAtRest`). To decrypt it, the plugin reads the **Cursor Safe Storage** key from your login Keychain, so the first run shows a prompt asking to let `security` access it. Enter your login password and choose **Always Allow**; with **Allow**, the prompt returns on every refresh. Some Macs have two **Cursor Safe Storage** items (accounts `Cursor` and `Cursor Key`); if the first one doesn't decrypt the token, a second prompt appears for the other.
+
+### Usage-based plans
+
+On usage-based (token-based) plans there are no included requests, so the menu bar shows spend only (e.g. `$82/$1000`) and the dropdown labels it **Spend This Cycle**.
 
 ### Plugin doesn't appear in menu bar
 

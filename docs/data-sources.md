@@ -54,7 +54,16 @@ All data is SQLite. Query with `sqlite3` CLI or Python's `sqlite3` module.
 
 Base URL: `https://www.cursor.com`
 
-Auth: Cookie `WorkosCursorSessionToken={userId}::{accessToken}` (extracted from local DB).
+Auth: Cookie `WorkosCursorSessionToken={userId}::{accessToken}` (extracted from local DB; `userId` is the JWT `sub` claim).
+
+`cursorAuth/accessToken` is a plain JWT on older Cursor builds. Newer builds encrypt it at rest
+(`cursor.storage.authTokenEncryptionAtRest` = `true`) as `cursor-safe-storage:v1:` + base64 of an
+Electron `safeStorage` blob, which must be decrypted first:
+
+- **Key:** PBKDF2-SHA1 of the "Cursor Safe Storage" Keychain password (salt `saltysalt`, 1003 iterations, 16 bytes). Some installs have two items under that service (accounts `Cursor` and `Cursor Key`); the scripts try both and keep the one that decrypts to a JWT.
+- **Blob after base64:** `v10` + AES-128-CBC ciphertext (IV = 16 spaces, PKCS#7).
+
+A rejected session returns HTTP 401 with `{"error":"not_authenticated", ...}`.
 
 - `GET /api/usage` -- aggregate requests and tokens per billing cycle
 - `GET /api/auth/stripe` -- plan info, team membership
