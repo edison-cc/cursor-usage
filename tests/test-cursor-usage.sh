@@ -150,6 +150,11 @@ if [ -n "$API_ERROR" ]; then
   exit 1
 fi
 
+# Included-usage plans have no request quota. /api/usage then stays at 0/null;
+# the current period endpoint is what the dashboard percent comes from.
+PERIOD=$(api_post "https://www.cursor.com/api/dashboard/get-current-period-usage" "{}")
+PLAN=$(api_post "https://www.cursor.com/api/dashboard/get-plan-info" "{}")
+
 SPEND_JSON=""
 if [ -n "$TEAM_ID" ]; then
   SPEND_JSON=$(api_post "https://www.cursor.com/api/dashboard/get-team-spend" "{\"teamId\":$TEAM_ID}")
@@ -166,6 +171,10 @@ if [ -n "$SPEND_JSON" ]; then
 else
   printf '%s' '{}' > "$API_DIR/spend.json"
 fi
+# ${var:-{}} is not a safe "{}" default: the first } closes the expansion
+# and the second is written literally, which breaks JSON parsing.
+if [ -n "$PERIOD" ]; then printf '%s' "$PERIOD" > "$API_DIR/period.json"; else printf '%s' '{}' > "$API_DIR/period.json"; fi
+if [ -n "$PLAN" ]; then printf '%s' "$PLAN" > "$API_DIR/plan.json"; else printf '%s' '{}' > "$API_DIR/plan.json"; fi
 export CURSOR_USAGE_API_DIR="$API_DIR"
 
 export EMAIL
@@ -199,10 +208,58 @@ start_str = usage.get("startOfMonth", "")
 membership = stripe.get("membershipType", "unknown")
 team_id = stripe.get("teamId", "")
 
+def epoch_ms(value):
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    if n < 10 ** 11:
+        return None
+    return datetime.datetime.fromtimestamp(n / 1000, datetime.timezone.utc)
+
+period = load_api_json("period.json")
+plan_info = (load_api_json("plan.json").get("planInfo") or {})
+plan_usage = period.get("planUsage") or {}
+included_pct = plan_usage.get("totalPercentUsed")
+if included_pct is None:
+    included_pct = plan_usage.get("autoPercentUsed")
+try:
+    included_pct = float(included_pct) if included_pct is not None else None
+except (TypeError, ValueError):
+    included_pct = None
+period_start = epoch_ms(period.get("billingCycleStart"))
+period_end = epoch_ms(period.get("billingCycleEnd")) or epoch_ms(plan_info.get("includedUsageResetsAt"))
+usage_period = str(plan_info.get("includedUsagePeriod") or "")
+if "WEEK" in usage_period:
+    period_label = "weekly"
+elif "MONTH" in usage_period:
+    period_label = "monthly"
+else:
+    period_label = ""
+
 print(f"User:  {email}")
 print(f"Plan:  {membership}" + (f"  (team {team_id})" if team_id else ""))
 
-if start_str:
+# On-demand spend (enterprise/team plans only) is resolved before the cycle
+# line so included-usage plans can show their own window.
+members = spend_data.get("teamMemberSpend", [])
+me = next((m for m in members if m.get("email", "").lower() == email.lower()), None)
+# Usage-based plans (maxRequestUsage null) have no included requests: all usage
+# is billed and reported as overallSpendCents. Zero-valued fields are omitted.
+spend_key = "spendCents" if total else "overallSpendCents"
+spend_cents = 0
+has_spend = False
+if me and (spend_key in me or not total):
+    has_spend = True
+    spend_cents = me.get(spend_key, 0)
+has_included = included_pct is not None and not total and not has_spend
+
+if has_included and period_start and period_end:
+    cycle = f"{period_start.strftime('%b %d')} → {period_end.strftime('%b %d, %Y')}"
+    if period_label:
+        cycle += f"  ({period_label})"
+    print(f"Cycle: {cycle}")
+elif start_str:
     try:
         start_dt = datetime.datetime.fromisoformat(start_str.replace("Z", "+00:00"))
         if start_dt.month == 12:
@@ -215,25 +272,23 @@ if start_str:
 
 bar_len = 30
 
-# On-demand spend (enterprise/team plans only)
-members = spend_data.get("teamMemberSpend", [])
-me = next((m for m in members if m.get("email", "").lower() == email.lower()), None)
-# Usage-based plans (maxRequestUsage null) have no included requests: all usage
-# is billed and reported as overallSpendCents. Zero-valued fields are omitted.
-spend_key = "spendCents" if total else "overallSpendCents"
-spend_cents = 0
-has_spend = False
-if me and (spend_key in me or not total):
-    has_spend = True
-    spend_cents = me.get(spend_key, 0)
-
 quota_reached = total > 0 and (used >= total or (has_spend and spend_cents > 0))
 display_used = total if quota_reached else used
 req_pct = (display_used / total * 100) if total else 0
 filled = int(bar_len * min(req_pct, 100) / 100)
 req_bar = "█" * filled + "░" * (bar_len - filled)
 
-if total or not has_spend:
+if has_included:
+    filled = int(bar_len * min(included_pct, 100) / 100)
+    inc_bar = "█" * filled + "░" * (bar_len - filled)
+    label = "Included Usage:"
+    if period_label:
+        label = f"Included Usage ({period_label}):"
+    print()
+    print(f"{label} {included_pct:.0f}%")
+    print(f"  [{inc_bar}] {included_pct:.0f}%")
+
+if total or (not has_spend and not has_included):
     print()
     print(f"Included Requests:  {display_used} / {total}")
     print(f"  [{req_bar}] {req_pct:.0f}%")

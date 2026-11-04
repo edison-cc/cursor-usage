@@ -151,6 +151,11 @@ if [ -n "$API_ERROR" ]; then
   exit 1
 fi
 
+# Included-usage plans have no request quota. /api/usage then stays at 0/null;
+# the current period endpoint is what the dashboard percent comes from.
+PERIOD=$(api_post "https://www.cursor.com/api/dashboard/get-current-period-usage" "{}")
+PLAN=$(api_post "https://www.cursor.com/api/dashboard/get-plan-info" "{}")
+
 SPEND_JSON=""
 if [ -n "$TEAM_ID" ]; then
   SPEND_JSON=$(api_post "https://www.cursor.com/api/dashboard/get-team-spend" "{\"teamId\":$TEAM_ID}")
@@ -167,6 +172,10 @@ if [ -n "$SPEND_JSON" ]; then
 else
   printf '%s' '{}' > "$API_DIR/spend.json"
 fi
+# ${var:-{}} is not a safe "{}" default: the first } closes the expansion
+# and the second is written literally, which breaks JSON parsing.
+if [ -n "$PERIOD" ]; then printf '%s' "$PERIOD" > "$API_DIR/period.json"; else printf '%s' '{}' > "$API_DIR/period.json"; fi
+if [ -n "$PLAN" ]; then printf '%s' "$PLAN" > "$API_DIR/plan.json"; else printf '%s' '{}' > "$API_DIR/plan.json"; fi
 export CURSOR_USAGE_API_DIR="$API_DIR"
 
 export EMAIL DB
@@ -262,6 +271,36 @@ if me and (spend_key in me or not total):
 
 spend_dollars = spend_cents / 100
 
+def epoch_ms(value):
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    if n < 10 ** 11:
+        return None
+    return datetime.datetime.fromtimestamp(n / 1000, datetime.timezone.utc)
+
+period = load_api_json("period.json")
+plan_info = (load_api_json("plan.json").get("planInfo") or {})
+plan_usage = period.get("planUsage") or {}
+included_pct = plan_usage.get("totalPercentUsed")
+if included_pct is None:
+    included_pct = plan_usage.get("autoPercentUsed")
+try:
+    included_pct = float(included_pct) if included_pct is not None else None
+except (TypeError, ValueError):
+    included_pct = None
+period_start = epoch_ms(period.get("billingCycleStart"))
+period_end = epoch_ms(period.get("billingCycleEnd")) or epoch_ms(plan_info.get("includedUsageResetsAt"))
+usage_period = str(plan_info.get("includedUsagePeriod") or "")
+if "WEEK" in usage_period:
+    period_label = "weekly"
+elif "MONTH" in usage_period:
+    period_label = "monthly"
+else:
+    period_label = ""
+has_included = included_pct is not None and not total and not has_spend
+
 # ---------------------------------------------------------------------------
 # Load local DB data
 # ---------------------------------------------------------------------------
@@ -350,13 +389,17 @@ if os.path.isdir(ws_base):
 
 quota_reached = total > 0 and (used >= total or (has_spend and spend_cents > 0))
 display_used = total if quota_reached else used
-show_requests = bool(total) or not has_spend
+show_requests = bool(total) or (not has_spend and not has_included)
 req_pct = (display_used / total * 100) if total else 0
 spend_pct = (spend_dollars / limit_dollars * 100) if limit_dollars else 0
 avg_tokens = tokens // used if used else 0
 
 cycle_str = ""
-if start_str:
+if has_included and period_start and period_end:
+    cycle_str = f"{period_start.strftime('%b %d')} -> {period_end.strftime('%b %d, %Y')}"
+    if period_label:
+        cycle_str += f" ({period_label})"
+elif start_str:
     try:
         start_dt = datetime.datetime.fromisoformat(start_str.replace("Z", "+00:00"))
         end_dt = start_dt.replace(
@@ -425,6 +468,14 @@ print(f"{BOLD}{'═' * W}{RESET}")
 # --- Billing Cycle --------------------------------------------------------
 
 header("BILLING CYCLE", f"{cycle_str}    Plan: {membership}")
+
+if has_included:
+    ic = pct_color(included_pct)
+    inc_label = "Included Usage"
+    if period_label:
+        inc_label += f" ({period_label})"
+    print(f"  {inc_label:<20}{BOLD}{ic}{included_pct:.0f}%{RESET}")
+    print(f"  [{bar(included_pct, 30, ic)}] {ic}{included_pct:.0f}%{RESET}")
 
 if show_requests:
     rc = pct_color(req_pct)

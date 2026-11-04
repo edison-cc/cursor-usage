@@ -27,7 +27,9 @@ Everything the plugin shows, plus:
 
 ### Data sources used
 
-- `GET /api/usage` -- aggregate requests and tokens per billing cycle
+- `GET /api/usage` -- aggregate requests and tokens per billing cycle. Request-quota plans only; included-usage plans return `maxRequestUsage: null` and zeros.
+- `POST /api/dashboard/get-current-period-usage` -- included-usage percent (`planUsage.totalPercentUsed`) and the current period window. This is the dashboard "You've used N% of your included usage" figure.
+- `POST /api/dashboard/get-plan-info` -- plan name and included-usage period (`INCLUDED_USAGE_PERIOD_WEEKLY` / monthly) plus when that allowance resets.
 - `GET /api/auth/stripe` -- plan info, team membership
 - `POST /api/dashboard/get-team-spend` -- per-member spend (team only)
 - Local SQLite databases (global + per-workspace) -- see Source A below
@@ -65,7 +67,9 @@ Electron `safeStorage` blob, which must be decrypted first:
 
 A rejected session returns HTTP 401 with `{"error":"not_authenticated", ...}`.
 
-- `GET /api/usage` -- aggregate requests and tokens per billing cycle
+- `GET /api/usage` -- aggregate requests and tokens per billing cycle. Request-quota plans only; included-usage plans return `maxRequestUsage: null` and zeros.
+- `POST /api/dashboard/get-current-period-usage` -- included-usage percent (`planUsage.totalPercentUsed`) and the current period window. This is the dashboard "You've used N% of your included usage" figure.
+- `POST /api/dashboard/get-plan-info` -- plan name and included-usage period (`INCLUDED_USAGE_PERIOD_WEEKLY` / monthly) plus when that allowance resets.
 - `GET /api/auth/stripe` -- plan info, team membership
 - `POST /api/dashboard/get-team-spend` -- per-member spend (team only)
 

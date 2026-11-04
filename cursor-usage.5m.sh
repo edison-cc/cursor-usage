@@ -136,6 +136,11 @@ USAGE=$(api_get "https://www.cursor.com/api/usage")
 API_ERROR=$(printf '%s' "$USAGE" | api_error_message)
 [ -z "$API_ERROR" ] || error_exit "$API_ERROR"
 
+# Included-usage plans have no request quota. /api/usage then stays at 0/null;
+# the current period endpoint is what the dashboard percent comes from.
+PERIOD=$(api_post "https://www.cursor.com/api/dashboard/get-current-period-usage" "{}")
+PLAN=$(api_post "https://www.cursor.com/api/dashboard/get-plan-info" "{}")
+
 SPEND_JSON=""
 if [ -n "$TEAM_ID" ]; then
   SPEND_JSON=$(api_post "https://www.cursor.com/api/dashboard/get-team-spend" "{\"teamId\":$TEAM_ID}")
@@ -152,6 +157,10 @@ if [ -n "$SPEND_JSON" ]; then
 else
   printf '%s' '{}' > "$API_DIR/spend.json"
 fi
+# ${var:-{}} is not a safe "{}" default: the first } closes the expansion
+# and the second is written literally, which breaks JSON parsing.
+if [ -n "$PERIOD" ]; then printf '%s' "$PERIOD" > "$API_DIR/period.json"; else printf '%s' '{}' > "$API_DIR/period.json"; fi
+if [ -n "$PLAN" ]; then printf '%s' "$PLAN" > "$API_DIR/plan.json"; else printf '%s' '{}' > "$API_DIR/plan.json"; fi
 export CURSOR_USAGE_API_DIR="$API_DIR"
 
 DAILY_STATS=$(sqlite3 "$DB" \
@@ -215,6 +224,37 @@ display_used = total if quota_reached else used
 req_pct = (display_used / total * 100) if total else 0
 spend_pct = (spend_dollars / limit_dollars * 100) if limit_dollars else 0
 
+def epoch_ms(value):
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    if n < 10 ** 11:
+        return None
+    return datetime.datetime.fromtimestamp(n / 1000, datetime.timezone.utc)
+
+period = load_api_json("period.json")
+plan_info = (load_api_json("plan.json").get("planInfo") or {})
+plan_usage = period.get("planUsage") or {}
+included_pct = plan_usage.get("totalPercentUsed")
+if included_pct is None:
+    included_pct = plan_usage.get("autoPercentUsed")
+try:
+    included_pct = float(included_pct) if included_pct is not None else None
+except (TypeError, ValueError):
+    included_pct = None
+period_start = epoch_ms(period.get("billingCycleStart"))
+period_end = epoch_ms(period.get("billingCycleEnd")) or epoch_ms(plan_info.get("includedUsageResetsAt"))
+usage_period = str(plan_info.get("includedUsagePeriod") or "")
+if "WEEK" in usage_period:
+    period_label = "weekly"
+elif "MONTH" in usage_period:
+    period_label = "monthly"
+else:
+    period_label = ""
+# Request-quota and team-spend plans keep their existing meter.
+has_included = included_pct is not None and not total and not has_spend
+
 def pct_color(pct):
     if pct >= 80:
         return "#ff4444"
@@ -240,26 +280,33 @@ countdown_color = "#4CAF50"
 start_dt = None
 end_dt = None
 
-if start_str:
+if has_included and period_start and period_end:
+    start_dt = period_start
+    end_dt = period_end
+elif start_str:
     try:
         start_dt = datetime.datetime.fromisoformat(start_str.replace("Z", "+00:00"))
         if start_dt.month == 12:
             end_dt = start_dt.replace(year=start_dt.year + 1, month=1)
         else:
             end_dt = start_dt.replace(month=start_dt.month + 1)
-        delta = end_dt - now
-        if delta.total_seconds() > 0:
-            d = delta.days
-            h = delta.seconds // 3600
-            m = (delta.seconds % 3600) // 60
-            countdown_str = f"{d}d {h}h {m}m" if d > 0 else f"{h}h {m}m"
-            countdown_compact = f"{d}d" if d > 0 else f"{h}h"
-            if d < 3:
-                countdown_color = "#ff4444"
-            elif d < 7:
-                countdown_color = "#ffaa00"
     except:
         pass
+
+if start_dt and end_dt:
+    delta = end_dt - now
+    if delta.total_seconds() > 0:
+        d = delta.days
+        h = delta.seconds // 3600
+        m = (delta.seconds % 3600) // 60
+        countdown_str = f"{d}d {h}h {m}m" if d > 0 else f"{h}h {m}m"
+        countdown_compact = f"{d}d" if d > 0 else f"{h}h"
+        span = (end_dt - start_dt).total_seconds()
+        remaining = delta.total_seconds() / span if span else 1
+        if remaining < 0.1:
+            countdown_color = "#ff4444"
+        elif remaining < 0.25:
+            countdown_color = "#ffaa00"
 
 # --- Pace indicator ---
 pace_label = ""
@@ -269,7 +316,12 @@ if start_dt and end_dt:
     total_s = (end_dt - start_dt).total_seconds()
     if total_s > 0 and elapsed_s > 0:
         expected_pct = (elapsed_s / total_s) * 100
-        usage_pct = spend_pct if has_spend else req_pct
+        if has_included:
+            usage_pct = included_pct
+        elif has_spend:
+            usage_pct = spend_pct
+        else:
+            usage_pct = req_pct
         pace = usage_pct / expected_pct if expected_pct > 0 else 0
         if pace < 1.0:
             pace_label, pace_color = f"{pace:.1f}x (Cruising)", "#4CAF50"
@@ -293,13 +345,14 @@ if has_spend:
     else:
         motto = "On the meter. Worth every cent."
 else:
-    if req_pct >= 95:
+    motto_pct = included_pct if has_included else req_pct
+    if motto_pct >= 95:
         motto = "Limit reached. Touch grass."
-    elif req_pct >= 80:
+    elif motto_pct >= 80:
         motto = "Running hot."
-    elif req_pct >= 50:
+    elif motto_pct >= 50:
         motto = "In the zone."
-    elif req_pct >= 20:
+    elif motto_pct >= 20:
         motto = "Steady pace. Shipping."
     else:
         motto = "Fresh start. Go build."
@@ -347,8 +400,15 @@ if recent_commit and "aiPercentage" in recent_commit:
 # ====== OUTPUT ======
 
 # Menu bar title
-dot = pct_dot(spend_pct) if has_spend else pct_dot(req_pct)
-if has_spend:
+if has_included:
+    dot = pct_dot(included_pct)
+elif has_spend:
+    dot = pct_dot(spend_pct)
+else:
+    dot = pct_dot(req_pct)
+if has_included:
+    bar_text = f"{dot} {included_pct:.0f}%"
+elif has_spend:
     req_prefix = f"{total} · " if total else ""
     bar_text = f"{dot} {req_prefix}${spend_dollars:.0f}/${limit_dollars:.0f}"
 else:
@@ -359,6 +419,8 @@ print("---")
 
 # User info
 plan_line = f"Plan: {membership}"
+if has_included and period_label:
+    plan_line += f"  ·  resets {period_label}"
 if tenure_str:
     plan_line += f"  ·  Cursor user for {tenure_str}"
 print(f"{email} | color=#888888 size=12")
@@ -383,8 +445,20 @@ if ai_pct_str:
 
 print("---")
 
-# Included requests
-show_requests = bool(total) or not has_spend
+# Included usage (percent plans) or included requests (quota plans)
+show_requests = bool(total) or (not has_spend and not has_included)
+if has_included:
+    inc_color = pct_color(included_pct)
+    inc_filled = int(20 * min(included_pct, 100) / 100)
+    if included_pct > 0 and inc_filled == 0:
+        inc_filled = 1
+    inc_bar = "█" * inc_filled + "░" * (20 - inc_filled)
+    inc_title = "Included Usage"
+    if period_label:
+        inc_title += f" ({period_label})"
+    print(f"{inc_title} | size=13")
+    print(f"  {included_pct:.0f}% | color={inc_color} size=13 font=Menlo")
+    print(f"  {inc_bar} | size=11 font=Menlo color={inc_color}")
 if show_requests:
     req_bar = "█" * int(20 * min(req_pct, 100) / 100) + "░" * (20 - int(20 * min(req_pct, 100) / 100))
     print(f"Included Requests | size=13")
