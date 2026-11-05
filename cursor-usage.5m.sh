@@ -7,8 +7,117 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:$PAT
 
 DB="$HOME/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
 
+# Cursor's menu-bar cube. SwiftBar 2.1.1 ignores templateImage, and its
+# light/dark image pair does not follow this menu bar, so pick one tint from
+# the system appearance. Loaded from the installed app so a later agent plugin
+# can point the same helper at a different icon.
+menu_icon_param() {
+  python3 - << 'PY'
+import base64, struct, zlib
+from pathlib import Path
+
+def find_icon():
+    names = ("trayTemplate@2x.png", "trayTemplate.png")
+    roots = [Path("/Applications/Cursor.app"), Path.home() / "Applications/Cursor.app"]
+    for root in roots:
+        base = root / "Contents/Resources/app/molten/dist/tray/darwin"
+        for name in names:
+            path = base / name
+            if path.is_file():
+                return path
+    return None
+
+def read_png(path):
+    data = path.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a png")
+    pos = 8
+    width = height = None
+    raw = b""
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos:pos + 4])[0]
+        kind = data[pos + 4:pos + 8]
+        chunk = data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+        if kind == b"IHDR":
+            width, height, bit, color = struct.unpack(">IIBB", chunk[:10])
+            if bit != 8 or color != 6:
+                raise ValueError("unsupported png")
+        elif kind == b"IDAT":
+            raw += chunk
+        elif kind == b"IEND":
+            break
+    rows = []
+    stride = width * 4
+    decoded = zlib.decompress(raw)
+    prev = bytearray(stride)
+    i = 0
+    for _ in range(height):
+        filt = decoded[i]
+        i += 1
+        row = bytearray(decoded[i:i + stride])
+        i += stride
+        for x in range(stride):
+            left = row[x - 4] if x >= 4 else 0
+            up = prev[x]
+            up_left = prev[x - 4] if x >= 4 else 0
+            if filt == 0:
+                pred = 0
+            elif filt == 1:
+                pred = left
+            elif filt == 2:
+                pred = up
+            elif filt == 3:
+                pred = (left + up) // 2
+            elif filt == 4:
+                p = left + up - up_left
+                pa, pb, pc = abs(p - left), abs(p - up), abs(p - up_left)
+                pred = left if pa <= pb and pa <= pc else up if pb <= pc else up_left
+            else:
+                raise ValueError("bad png filter")
+            row[x] = (row[x] + pred) & 255
+        rows.append(row)
+        prev = row
+    return width, height, rows
+
+def write_png(width, height, rows):
+    def chunk(kind, payload):
+        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    raw = b"".join(b"\x00" + bytes(row) for row in rows)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
+
+def tint(rows, rgb):
+    out = []
+    for row in rows:
+        tinted = bytearray(row)
+        for x in range(0, len(row), 4):
+            tinted[x:x + 3] = bytes(rgb)
+        out.append(tinted)
+    return out
+
+path = find_icon()
+if path is None:
+    raise SystemExit(0)
+width, height, rows = read_png(path)
+appearance = __import__("subprocess").run(
+    ["defaults", "read", "-g", "AppleInterfaceStyle"],
+    capture_output=True, text=True,
+).stdout.strip()
+rgb = (255, 255, 255) if appearance == "Dark" else (0, 0, 0)
+print(base64.b64encode(write_png(width, height, tint(rows, rgb))).decode())
+PY
+}
+
+MENU_ICON=$(menu_icon_param)
+export MENU_ICON
+
 error_exit() {
-  echo "$(printf '\033[31m●\033[0m') err | ansi=true"
+  local icon=""
+  if [ -n "$MENU_ICON" ]; then
+    icon=" image=$MENU_ICON"
+  fi
+  echo "$(printf '\033[31m●\033[0m') err | ansi=true${icon}"
   echo "---"
   echo "$1 | color=#ff4444"
   exit 0
@@ -173,7 +282,8 @@ RECENT_COMMIT=$(sqlite3 "$DB" \
 export EMAIL DAILY_STATS FIRST_SESSION RECENT_COMMIT
 
 python3 << 'PYEOF'
-import json, os, sys, datetime
+import json, os, datetime
+from email.utils import parsedate_to_datetime
 
 def safe_load(s):
     try:
@@ -192,6 +302,7 @@ usage = load_api_json("usage.json")
 stripe = load_api_json("stripe.json")
 spend_data = load_api_json("spend.json")
 email = os.environ.get("EMAIL", "")
+menu_icon = os.environ.get("MENU_ICON", "").strip()
 daily_stats_raw = os.environ.get("DAILY_STATS", "")
 first_session_raw = os.environ.get("FIRST_SESSION", "")
 recent_commit_raw = os.environ.get("RECENT_COMMIT", "")
@@ -272,11 +383,125 @@ def pct_dot(pct):
 req_color = pct_color(req_pct)
 spend_color = pct_color(spend_pct) if has_spend else "#4CAF50"
 
+def bar20(pct):
+    bounded = min(max(pct, 0), 100)
+    filled = int(20 * bounded / 100)
+    if pct > 0 and filled == 0:
+        filled = 1
+    return "█" * filled + "░" * (20 - filled)
+
+def opt_pct(mapping, key):
+    value = mapping.get(key) if isinstance(mapping, dict) else None
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+def as_dollars(key, value):
+    # This API states cents in the field name. Other integer amounts at or
+    # above 100 are also cents; smaller numbers and floats are already dollars.
+    if "cent" in key.lower():
+        return value / 100.0
+    if isinstance(value, int) and abs(value) >= 100:
+        return value / 100.0
+    return float(value)
+
+def numeric_field(mapping, key):
+    if not isinstance(mapping, dict) or key not in mapping:
+        return None
+    value = mapping.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+def dollars_left(mapping):
+    """Remaining allowance, only when planUsage actually carries spend and limit."""
+    limit = None
+    for key in ("limitCents", "includedLimitCents", "limit", "includedLimit"):
+        raw = numeric_field(mapping, key)
+        if raw is not None:
+            limit = as_dollars(key, raw)
+            break
+    if limit is None or limit <= 0:
+        return None
+    for key in ("remainingCents", "remaining"):
+        raw = numeric_field(mapping, key)
+        if raw is not None:
+            return max(0.0, as_dollars(key, raw))
+    used = None
+    for key in ("totalSpendCents", "includedSpendCents", "totalSpend", "includedSpend"):
+        raw = numeric_field(mapping, key)
+        if raw is not None:
+            used = as_dollars(key, raw)
+            break
+    if used is None:
+        return None
+    return max(0.0, limit - used)
+
+def money(amount):
+    if abs(amount - round(amount)) < 0.005:
+        return f"${amount:.0f}"
+    return f"${amount:.2f}"
+
+def duration_phrase(seconds):
+    if seconds <= 0:
+        return ""
+    total_min = int(seconds // 60)
+    days, rem = divmod(total_min, 60 * 24)
+    hours, minutes = divmod(rem, 60)
+    if days > 0:
+        parts = [f"{days}d", f"{hours}h"]
+        if minutes:
+            parts.append(f"{minutes}m")
+        return " ".join(parts)
+    if hours > 0:
+        return f"{hours}h" if minutes == 0 else f"{hours}h {minutes}m"
+    if minutes > 0:
+        return f"{minutes}m"
+    return "<1m"
+
+def menu_bar_remaining(seconds):
+    if seconds <= 0:
+        return ""
+    total_min = int(seconds // 60)
+    days, rem = divmod(total_min, 60 * 24)
+    hours, minutes = divmod(rem, 60)
+    if days > 0:
+        return f"{days}d"
+    if hours > 0:
+        return f"{hours}h"
+    if minutes > 0:
+        return f"{minutes}m"
+    return "<1m"
+
+def parse_session_date(raw):
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        dt = None
+    if dt is None:
+        try:
+            dt = parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            dt = None
+    if dt is None:
+        try:
+            dt = datetime.datetime.strptime(raw[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
+
 # --- Countdown to reset ---
 now = datetime.datetime.now(datetime.timezone.utc)
 countdown_str = ""
 countdown_compact = ""
-countdown_color = "#4CAF50"
 start_dt = None
 end_dt = None
 
@@ -293,69 +518,84 @@ elif start_str:
     except:
         pass
 
+remaining_s = None
 if start_dt and end_dt:
     delta = end_dt - now
-    if delta.total_seconds() > 0:
-        d = delta.days
-        h = delta.seconds // 3600
-        m = (delta.seconds % 3600) // 60
-        countdown_str = f"{d}d {h}h {m}m" if d > 0 else f"{h}h {m}m"
-        countdown_compact = f"{d}d" if d > 0 else f"{h}h"
-        span = (end_dt - start_dt).total_seconds()
-        remaining = delta.total_seconds() / span if span else 1
-        if remaining < 0.1:
-            countdown_color = "#ff4444"
-        elif remaining < 0.25:
-            countdown_color = "#ffaa00"
+    remaining_s = delta.total_seconds()
+    if remaining_s > 0:
+        countdown_str = duration_phrase(remaining_s)
+        countdown_compact = menu_bar_remaining(remaining_s)
 
-# --- Pace indicator ---
-pace_label = ""
-pace_color = "#888888"
-if start_dt and end_dt:
-    elapsed_s = (now - start_dt).total_seconds()
-    total_s = (end_dt - start_dt).total_seconds()
-    if total_s > 0 and elapsed_s > 0:
-        expected_pct = (elapsed_s / total_s) * 100
-        if has_included:
-            usage_pct = included_pct
-        elif has_spend:
-            usage_pct = spend_pct
-        else:
-            usage_pct = req_pct
-        pace = usage_pct / expected_pct if expected_pct > 0 else 0
-        if pace < 1.0:
-            pace_label, pace_color = f"{pace:.1f}x (Cruising)", "#4CAF50"
-        elif pace < 1.2:
-            pace_label, pace_color = f"{pace:.1f}x (On Track)", "#4CAF50"
-        elif pace < 1.5:
-            pace_label, pace_color = f"{pace:.1f}x (Burning Fast)", "#ffaa00"
-        else:
-            pace_label, pace_color = f"{pace:.1f}x (Token Anxiety)", "#ff4444"
-
-# --- Motivational message ---
-if has_spend:
-    if spend_pct >= 95:
-        motto = "Budget limit. Touch grass."
-    elif spend_pct >= 80:
-        motto = "Wallet getting nervous."
-    elif spend_pct >= 50:
-        motto = "Money well spent... right?"
-    elif spend_pct >= 20:
-        motto = "Investing in velocity."
-    else:
-        motto = "On the meter. Worth every cent."
+# The meter that answers "will this run out?": included percent, else spend, else requests.
+if has_included:
+    usage_pct = included_pct
+elif has_spend:
+    usage_pct = spend_pct
+elif total:
+    usage_pct = req_pct
 else:
-    motto_pct = included_pct if has_included else req_pct
-    if motto_pct >= 95:
-        motto = "Limit reached. Touch grass."
-    elif motto_pct >= 80:
-        motto = "Running hot."
-    elif motto_pct >= 50:
-        motto = "In the zone."
-    elif motto_pct >= 20:
-        motto = "Steady pace. Shipping."
+    usage_pct = None
+
+pace = None
+projected = None
+elapsed_frac = None
+cycle_s = None
+if start_dt and end_dt and usage_pct is not None:
+    elapsed_s = (now - start_dt).total_seconds()
+    cycle_s = (end_dt - start_dt).total_seconds()
+    if cycle_s > 0 and elapsed_s > 0:
+        elapsed_frac = elapsed_s / cycle_s
+        if elapsed_frac > 0:
+            pace = usage_pct / (elapsed_frac * 100)
+            projected = usage_pct / elapsed_frac
+
+def signal_pct(actual):
+    # Early in the cycle, or after it has ended, a projection is not meaningful.
+    if actual is None:
+        return 0
+    if remaining_s is not None and remaining_s <= 0:
+        return actual
+    if projected is None or elapsed_frac is None or elapsed_frac < 0.10:
+        return actual
+    return projected
+
+forecast_text = ""
+forecast_color = "#4CAF50"
+cycle_open = remaining_s is None or remaining_s > 0
+if usage_pct is not None and usage_pct >= 100:
+    forecast_text, forecast_color = "The allowance is used up", "#ff4444"
+elif cycle_open and pace is not None and elapsed_frac is not None and elapsed_frac >= 0.10:
+    if pace < 0.95:
+        forecast_text = f"At this pace you'll finish near {projected:.0f}%"
+        forecast_color = "#4CAF50"
+    elif pace < 1.2:
+        forecast_text = "About on pace to use the full allowance"
+        forecast_color = "#4CAF50" if pace < 1.05 else "#ffaa00"
+    elif cycle_s:
+        before = duration_phrase(cycle_s * (1 - 1 / pace))
+        if before:
+            forecast_text = f"At this pace you'll hit the limit about {before} before reset"
+            forecast_color = "#ffaa00" if pace < 1.5 else "#ff4444"
+
+daily_room = ""
+if (
+    usage_pct is not None
+    and usage_pct < 100
+    and remaining_s is not None
+    and remaining_s > 0
+):
+    remaining_pct = max(0.0, 100 - usage_pct)
+    if remaining_s >= 86400:
+        daily_room = f"About {remaining_pct / (remaining_s / 86400):.0f}% per day still available"
+    elif remaining_s >= 3600:
+        daily_room = f"About {remaining_pct / (remaining_s / 3600):.0f}% per hour still available"
     else:
-        motto = "Fresh start. Go build."
+        per_min = remaining_pct / max(remaining_s / 60, 1 / 60)
+        daily_room = f"About {per_min:.0f}% per minute still available"
+
+auto_pct = opt_pct(plan_usage, "autoPercentUsed")
+api_pct = opt_pct(plan_usage, "apiPercentUsed")
+included_dollars_left = dollars_left(plan_usage) if has_included else None
 
 # --- Sparkline from daily stats ---
 sparkline = ""
@@ -375,18 +615,11 @@ if daily_stats_raw.strip():
             spark_chars[min(int(v / max_val * 7), 7)] for v in daily_values
         )
 
-# --- Session tenure ---
-tenure_str = ""
-if first_session_raw.strip():
-    try:
-        first_dt = datetime.datetime.fromisoformat(first_session_raw.strip().replace("Z", "+00:00"))
-        tenure_str = f"{(now - first_dt).days}d"
-    except:
-        try:
-            first_dt = datetime.datetime.strptime(first_session_raw.strip()[:10], "%Y-%m-%d")
-            tenure_str = f"{(now.replace(tzinfo=None) - first_dt).days}d"
-        except:
-            pass
+# Install age comes from the first local session, not the account onboarding date.
+install_since = ""
+first_dt = parse_session_date(first_session_raw)
+if first_dt is not None:
+    install_since = first_dt.astimezone().strftime("%b %Y")
 
 # --- AI code attribution ---
 ai_pct_str = ""
@@ -399,49 +632,26 @@ if recent_commit and "aiPercentage" in recent_commit:
 
 # ====== OUTPUT ======
 
-# Menu bar title
+def meter(title, value_line, color, bar):
+    print(f"{title} | size=13")
+    print(f"{value_line} | color={color} size=13 font=Menlo")
+    print(f"{bar} | size=11 font=Menlo color={color}")
+
+# Menu bar title. The dot follows the projected end-of-cycle usage.
 if has_included:
-    dot = pct_dot(included_pct)
-elif has_spend:
-    dot = pct_dot(spend_pct)
-else:
-    dot = pct_dot(req_pct)
-if has_included:
+    dot = pct_dot(signal_pct(included_pct))
     bar_text = f"{dot} {included_pct:.0f}%"
 elif has_spend:
+    dot = pct_dot(signal_pct(spend_pct))
     req_prefix = f"{total} · " if total else ""
     bar_text = f"{dot} {req_prefix}${spend_dollars:.0f}/${limit_dollars:.0f}"
 else:
+    dot = pct_dot(signal_pct(req_pct))
     bar_text = f"{dot} {display_used}/{total}"
-print(f"{bar_text} | size=13 ansi=true")
-
-print("---")
-
-# User info
-plan_line = f"Plan: {membership}"
-if has_included and period_label:
-    plan_line += f"  ·  resets {period_label}"
-if tenure_str:
-    plan_line += f"  ·  Cursor user for {tenure_str}"
-print(f"{email} | color=#888888 size=12")
-print(f"{plan_line} | color=#888888 size=12")
-
-# Cycle dates + countdown
-if start_dt and end_dt:
-    print(f"Cycle: {start_dt.strftime('%b %d')} → {end_dt.strftime('%b %d, %Y')} | color=#888888 size=12")
-    if countdown_str:
-        print(f"⏳ Resets in: {countdown_str} | color={countdown_color} size=12 font=Menlo")
-
-print("---")
-
-# Status & activity section
-print(f'"{motto}" | size=13')
-if pace_label:
-    print(f"Pace: {pace_label} | color={pace_color} size=12 font=Menlo")
-if sparkline:
-    print(f"Activity (14d): {sparkline} | size=12 font=Menlo color=#888888")
-if ai_pct_str:
-    print(f"Last commit: {ai_pct_str} AI-generated | size=12 color=#888888")
+if countdown_compact:
+    bar_text += f" · {countdown_compact}"
+icon_param = f" image={menu_icon} width=16 height=16" if menu_icon else ""
+print(f"{bar_text} | size=13 ansi=true{icon_param}")
 
 print("---")
 
@@ -449,34 +659,68 @@ print("---")
 show_requests = bool(total) or (not has_spend and not has_included)
 if has_included:
     inc_color = pct_color(included_pct)
-    inc_filled = int(20 * min(included_pct, 100) / 100)
-    if included_pct > 0 and inc_filled == 0:
-        inc_filled = 1
-    inc_bar = "█" * inc_filled + "░" * (20 - inc_filled)
-    inc_title = "Included Usage"
-    if period_label:
-        inc_title += f" ({period_label})"
-    print(f"{inc_title} | size=13")
-    print(f"  {included_pct:.0f}% | color={inc_color} size=13 font=Menlo")
-    print(f"  {inc_bar} | size=11 font=Menlo color={inc_color}")
+    used_shown = int(round(included_pct))
+    left_shown = max(0, 100 - used_shown)
+    value_line = f"{used_shown}% used · {left_shown}% left"
+    if included_dollars_left is not None:
+        value_line += f" · {money(included_dollars_left)} left"
+    if period_label == "weekly":
+        inc_title = "Included this week"
+    elif period_label == "monthly":
+        inc_title = "Included this month"
+    else:
+        inc_title = "Included usage"
+    meter(inc_title, value_line, inc_color, bar20(included_pct))
 if show_requests:
-    req_bar = "█" * int(20 * min(req_pct, 100) / 100) + "░" * (20 - int(20 * min(req_pct, 100) / 100))
-    print(f"Included Requests | size=13")
-    print(f"  {display_used} / {total}  ({req_pct:.0f}%) | color={req_color} size=13 font=Menlo")
-    print(f"  {req_bar} | size=11 font=Menlo color={req_color}")
-    print(f"  Tokens: {tokens:,} | color=#888888 size=12 font=Menlo")
+    req_used_shown = int(round(req_pct))
+    req_left_shown = max(0, 100 - req_used_shown)
+    meter(
+        "Included Requests",
+        f"{display_used} / {total} · {req_used_shown}% used · {req_left_shown}% left",
+        req_color,
+        bar20(req_pct),
+    )
+    print(f"Tokens: {tokens:,} | color=#888888 size=12 font=Menlo")
 
-# On-demand
 if has_spend:
-    if show_requests:
-        print("---")
-    spend_bar = "█" * int(20 * min(spend_pct, 100) / 100) + "░" * (20 - int(20 * min(spend_pct, 100) / 100))
-    print(f"{'On-Demand Usage' if total else 'Spend This Cycle'} | size=13")
-    print(f"  ${spend_dollars:.2f} / ${limit_dollars:.0f}  ({spend_pct:.0f}%) | color={spend_color} size=13 font=Menlo")
-    print(f"  {spend_bar} | size=11 font=Menlo color={spend_color}")
+    spend_used_shown = int(round(spend_pct))
+    spend_left_shown = max(0, 100 - spend_used_shown)
+    meter(
+        "On-Demand Usage" if total else "Spend This Cycle",
+        f"${spend_dollars:.2f} / ${limit_dollars:.0f} · {spend_used_shown}% used · {spend_left_shown}% left",
+        spend_color,
+        bar20(spend_pct),
+    )
+
+if end_dt is not None:
+    when = end_dt.astimezone().strftime("%a, %b %-d, %-I:%M %p")
+    reset_line = f"Resets {when}"
+    if countdown_str:
+        reset_line += f" · {countdown_str}"
+    print(f"{reset_line} | color=#888888 size=12")
+if forecast_text:
+    print(f"{forecast_text} | color={forecast_color} size=12")
+if daily_room:
+    print(f"{daily_room} | color=#888888 size=12")
+if has_included and auto_pct is not None and api_pct is not None:
+    print(f"Auto {auto_pct:.0f}% · API {api_pct:.0f}% | size=12 font=Menlo")
+
+print("---")
+
+account = membership
+if email:
+    account += f" · {email}"
+print(f"{account} | color=#888888 size=12")
+if install_since:
+    print(f"On this Mac since {install_since} | color=#888888 size=12")
+if sparkline:
+    print(f"Activity (14d): {sparkline} | size=12 font=Menlo color=#888888")
+if ai_pct_str:
+    print(f"Last commit: {ai_pct_str} AI-generated | size=12 color=#888888")
 
 print("---")
 print("Open Cursor Settings | href=https://cursor.com/settings size=13")
-print("Source Code | href=https://github.com/edison-cc/cursor-usage size=13")
 print("Refresh | refresh=true size=13")
+print("More | size=13")
+print("--Source Code | href=https://github.com/edison-cc/cursor-usage size=13")
 PYEOF
