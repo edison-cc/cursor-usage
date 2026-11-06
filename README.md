@@ -1,111 +1,96 @@
 # Cursor Usage
 
-A macOS menu bar plugin that shows your Cursor IDE usage at a glance: included requests consumed and on-demand spend.
+A macOS menu bar plugin and a terminal report for your Cursor usage, from one shell script. It uses the Cursor login already on this machine.
+
+- **Menu bar.** Shows how much of this billing cycle you have used. After the first 10% of the cycle, the dot follows your pace projected out to reset day: green under 50%, yellow from 50–79%, red at 80% and above. Percent plans, request quotas, and usage-based spend (the bar reads `$82/$1000`) all use the same script.
+- **The dropdown.** Progress bars, the reset countdown, whether this pace runs out before reset, how much room is left per day, 14-day activity, your account, and the AI share of the last commit.
+- **Your existing login.** The plugin reads the Cursor session on this Mac. On newer Cursor builds the token is encrypted in the login Keychain, so the first run asks you to let `security` read **Cursor Safe Storage**.
+- **One script.** An executable shell script, plus the `bash`, `python3`, `sqlite3`, and `curl` that ship with macOS. Clone it to `~/cursor-usage` and symlink the plugin. `git -C ~/cursor-usage pull` updates the menu bar and the report together.
+- **A closer look.** `bash ~/cursor-usage/generate-report.sh` prints the billing cycle, token distribution, daily activity, conversations, and AI attribution as colored ASCII in the terminal.
 
 ## Demo
 
-The plugin displays your usage summary directly in the macOS menu bar. The dot color changes based on how much of your quota you've used:
+The dot color tracks that pace:
 
 | Green (< 50%) | Yellow (50–79%) | Red (80%+) |
 |:-:|:-:|:-:|
 | <img src="docs/assets/green-menubar.png" alt="Green menubar" width="90"> | <img src="docs/assets/yellow-menubar.png" alt="Yellow menubar" width="90"> | <img src="docs/assets/red-menubar.png" alt="Red menubar" width="90"> |
 | <img src="docs/assets/green-dropdown.png" alt="Green dropdown" width="280"> | <img src="docs/assets/yellow-dropdown.png" alt="Yellow dropdown" width="280"> | <img src="docs/assets/red-dropdown.png" alt="Red dropdown" width="280"> |
 
-## Prerequisites
+## Terminal report
 
-- **macOS** (Catalina 10.15+)
-- **Cursor IDE** — must be installed and signed in at least once
-- **[SwiftBar](https://github.com/swiftbar/SwiftBar)**
+Print a full usage report from the Cursor API and the local database:
+
+```bash
+bash ~/cursor-usage/generate-report.sh
+```
+
+The report covers the billing cycle, per-turn token distribution, daily activity, conversation analytics, AI code attribution, and account info. Output is colored ASCII in the terminal.
+
+Save it to a file (colors turn off automatically when piped):
+
+```bash
+bash ~/cursor-usage/generate-report.sh > report.txt
+```
+
+Turn colors off explicitly:
+
+```bash
+bash ~/cursor-usage/generate-report.sh --no-color
+```
+
+Data sources and metrics are listed in [docs/data-sources.md](docs/data-sources.md).
 
 ## Installation
 
-First, install SwiftBar if you haven't already:
+You need macOS Catalina 10.15 or later, Cursor installed and signed in at least once, and [SwiftBar](https://github.com/swiftbar/SwiftBar).
+
+Install SwiftBar if it is not already there:
 
 ```bash
 brew install --cask swiftbar
 ```
 
-Then pick one of the options below to install the plugin.
-
-### Option A: Quick Install (curl)
+Clone the repo into your home directory and point SwiftBar at it:
 
 ```bash
+git clone https://github.com/edison-cc/cursor-usage.git ~/cursor-usage
 mkdir -p ~/swiftbar-plugins
-curl -fsSL \
-  https://raw.githubusercontent.com/edison-cc/cursor-usage/main/cursor-usage.5m.sh \
-  -o ~/swiftbar-plugins/cursor-usage.5m.sh
-chmod +x ~/swiftbar-plugins/cursor-usage.5m.sh
+ln -sf ~/cursor-usage/cursor-usage.5m.sh ~/swiftbar-plugins/cursor-usage.5m.sh
 ```
 
-### Option B: Clone + Symlink
+Later, update both the plugin and the report with `git -C ~/cursor-usage pull`.
 
-Best for development or easy updates via `git pull`.
+### Open it
 
-```bash
-git clone https://github.com/edison-cc/cursor-usage.git
-cd cursor-usage
-mkdir -p ~/swiftbar-plugins
-ln -sf "$(pwd)/cursor-usage.5m.sh" ~/swiftbar-plugins/cursor-usage.5m.sh
-```
+Launch SwiftBar and choose `~/swiftbar-plugins` as the plugin directory. Open SwiftBar from the terminal (`open -a SwiftBar`), from Applications, or from Spotlight (Cmd+Space, then type "SwiftBar").
 
-### After installing
-
-Launch SwiftBar and select `~/swiftbar-plugins` as the plugin directory. You can open SwiftBar from the terminal (`open -a SwiftBar`), the Applications folder, or Spotlight (Cmd+Space and type "SwiftBar"):
-
-If SwiftBar is already running and you need to change the directory:
+If SwiftBar is already running and the directory needs to change:
 
 ```bash
 defaults write com.ameba.SwiftBar PluginDirectory "$HOME/swiftbar-plugins"
 ```
 
-Then restart SwiftBar.
+Restart SwiftBar. The plugin runs immediately and refreshes every **5 minutes**, from the `5m` in the filename.
 
-The plugin will run immediately and refresh every **5 minutes** (based on the `5m` in the filename).
+### Check the login
 
-## Testing
-
-Run the test script to verify API connectivity and auth without SwiftBar:
+Confirm the Cursor login and the API before involving SwiftBar:
 
 ```bash
-bash tests/test-cursor-usage.sh
+bash ~/cursor-usage/tests/test-cursor-usage.sh
 ```
 
-This calls the same Cursor APIs as the plugin and prints a plain-text summary. If you see your usage data, everything is working correctly.
+This calls the same Cursor APIs as the plugin and prints a plain-text summary. Your usage in that output means the login and the API are working.
 
-## Report
+### Change the refresh interval
 
-Generate a comprehensive usage report with metrics from both the Cursor API and local database:
-
-```bash
-bash generate-report.sh
-```
-
-The report includes: billing cycle overview, per-turn token distribution, daily activity trends, conversation analytics, AI code attribution, and account info. All output is terminal-based with colored ASCII charts -- no browser or dependencies needed.
-
-Save to a file (colors are automatically disabled when piped):
+The interval is the suffix on the plugin filename:
 
 ```bash
-bash generate-report.sh > report.txt
-```
-
-Use `--no-color` to explicitly disable colors:
-
-```bash
-bash generate-report.sh --no-color
-```
-
-For details on all available data sources and metrics, see [docs/data-sources.md](docs/data-sources.md).
-
-## Customization
-
-### Change refresh interval
-
-Rename the plugin file. The interval is encoded in the filename:
-
-```bash
-mv cursor-usage.5m.sh cursor-usage.10m.sh   # every 10 minutes
-mv cursor-usage.5m.sh cursor-usage.30s.sh   # every 30 seconds
-mv cursor-usage.5m.sh cursor-usage.1h.sh    # every hour
+mv ~/swiftbar-plugins/cursor-usage.5m.sh ~/swiftbar-plugins/cursor-usage.10m.sh   # every 10 minutes
+mv ~/swiftbar-plugins/cursor-usage.5m.sh ~/swiftbar-plugins/cursor-usage.30s.sh   # every 30 seconds
+mv ~/swiftbar-plugins/cursor-usage.5m.sh ~/swiftbar-plugins/cursor-usage.1h.sh    # every hour
 ```
 
 Supported suffixes: `s` (seconds), `m` (minutes), `h` (hours), `d` (days).
