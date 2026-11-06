@@ -707,7 +707,19 @@ if has_included and auto_pct is not None and api_pct is not None:
 
 print("---")
 
-account = membership
+def display_plan(info, fallback):
+    # planName is already "Premium" on current plans. membershipType is the
+    # lowercase slug (premium, pro_plus), so title-case whichever we show.
+    name = str((info or {}).get("planName") or "").strip()
+    source = name or str(fallback or "unknown")
+    words = []
+    for word in source.replace("_", " ").replace("-", " ").split():
+        plus = word.endswith("+")
+        core = word[:-1] if plus else word
+        words.append(core[:1].upper() + core[1:].lower() + ("+" if plus else ""))
+    return " ".join(words) or "Unknown"
+
+account = display_plan(plan_info, membership)
 if email:
     account += f" · {email}"
 print(f"{account} | color=#888888 size=12")
