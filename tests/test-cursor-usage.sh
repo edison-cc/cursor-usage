@@ -96,6 +96,24 @@ print("WorkosCursorSessionToken=%s::%s" % (sub, token))
 COOKIEPY
 }
 
+# The session cookie stays in a 0600 file. curl then reads that file, so the
+# token is not visible in the process list.
+cleanup() {
+  if [ -n "${API_DIR:-}" ]; then rm -rf "$API_DIR"; fi
+  if [ -n "${COOKIE_JAR:-}" ]; then rm -f "$COOKIE_JAR"; fi
+}
+trap cleanup EXIT INT HUP TERM
+
+write_cookie_jar() {
+  COOKIE_JAR=$(mktemp "${TMPDIR:-/tmp}/cursor-usage-test-cookie.XXXXXX") || return 1
+  chmod 600 "$COOKIE_JAR" || return 1
+  {
+    printf '%s\n' '# Netscape HTTP Cookie File'
+    printf '.cursor.com\tTRUE\t/\tTRUE\t0\tWorkosCursorSessionToken\t%s\n' \
+      "${1#WorkosCursorSessionToken=}"
+  } > "$COOKIE_JAR"
+}
+
 ACCESS_TOKEN=$(sqlite3 "$DB" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken';")
 if [ -z "$ACCESS_TOKEN" ]; then
   echo "ERROR: No access token found in DB. Are you signed in to Cursor?"
@@ -106,11 +124,16 @@ if ! COOKIE=$(session_cookie "$ACCESS_TOKEN"); then
   echo "ERROR: $COOKIE"
   exit 1
 fi
+if ! write_cookie_jar "$COOKIE"; then
+  echo "ERROR: Could not store the session cookie"
+  exit 1
+fi
+unset COOKIE ACCESS_TOKEN
 
 EMAIL=$(sqlite3 "$DB" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/cachedEmail';")
 
 api_get() {
-  curl -sL --max-time 15 -b "$COOKIE" "$1"
+  curl -sL --max-time 15 -b "$COOKIE_JAR" "$1"
 }
 
 # A rejected session still returns JSON ({"error":"not_authenticated"}).
@@ -134,7 +157,7 @@ api_post() {
     -X POST -H "Content-Type: application/json" \
     -H "Origin: https://cursor.com" \
     -d "$2" \
-    -b "$COOKIE" "$1"
+    -b "$COOKIE_JAR" "$1"
 }
 
 echo "=== Cursor Usage ==="
@@ -163,7 +186,6 @@ fi
 # Team spend JSON lists every member and can exceed ARG_MAX, so API responses
 # go through files instead of the environment.
 API_DIR=$(mktemp -d "${TMPDIR:-/tmp}/cursor-usage-test-api.XXXXXX")
-trap 'rm -rf "$API_DIR"' EXIT INT HUP TERM
 printf '%s' "$STRIPE" > "$API_DIR/stripe.json"
 printf '%s' "$USAGE" > "$API_DIR/usage.json"
 if [ -n "$SPEND_JSON" ]; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # <xbar.title>Cursor Usage</xbar.title>
 # <xbar.version>v1.0</xbar.version>
-# <xbar.desc>Shows Cursor included-request and on-demand usage in the menu bar</xbar.desc>
+# <xbar.desc>Shows Cursor usage in the menu bar: included usage, request quota, or on-demand spend</xbar.desc>
 
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 
@@ -203,15 +203,35 @@ print("WorkosCursorSessionToken=%s::%s" % (sub, token))
 COOKIEPY
 }
 
+# The session cookie stays in a 0600 file. curl then reads that file, so the
+# token is not visible in the process list.
+cleanup() {
+  if [ -n "${API_DIR:-}" ]; then rm -rf "$API_DIR"; fi
+  if [ -n "${COOKIE_JAR:-}" ]; then rm -f "$COOKIE_JAR"; fi
+}
+trap cleanup EXIT INT HUP TERM
+
+write_cookie_jar() {
+  COOKIE_JAR=$(mktemp "${TMPDIR:-/tmp}/cursor-usage-5m-cookie.XXXXXX") || return 1
+  chmod 600 "$COOKIE_JAR" || return 1
+  {
+    printf '%s\n' '# Netscape HTTP Cookie File'
+    printf '.cursor.com\tTRUE\t/\tTRUE\t0\tWorkosCursorSessionToken\t%s\n' \
+      "${1#WorkosCursorSessionToken=}"
+  } > "$COOKIE_JAR"
+}
+
 ACCESS_TOKEN=$(sqlite3 "$DB" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken';" 2>/dev/null)
 [ -n "$ACCESS_TOKEN" ] || error_exit "No access token — sign in to Cursor"
 
 COOKIE=$(session_cookie "$ACCESS_TOKEN") || error_exit "$COOKIE"
+write_cookie_jar "$COOKIE" || error_exit "Could not store the session cookie"
+unset COOKIE ACCESS_TOKEN
 
 EMAIL=$(sqlite3 "$DB" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/cachedEmail';" 2>/dev/null)
 
 api_get() {
-  curl -sL --max-time 15 -b "$COOKIE" "$1" 2>/dev/null
+  curl -sL --max-time 15 -b "$COOKIE_JAR" "$1" 2>/dev/null
 }
 
 # A rejected session still returns JSON ({"error":"not_authenticated"}).
@@ -235,7 +255,7 @@ api_post() {
     -X POST -H "Content-Type: application/json" \
     -H "Origin: https://cursor.com" \
     -d "$2" \
-    -b "$COOKIE" "$1" 2>/dev/null
+    -b "$COOKIE_JAR" "$1" 2>/dev/null
 }
 
 STRIPE=$(api_get "https://www.cursor.com/api/auth/stripe")
@@ -258,7 +278,6 @@ fi
 # Team spend JSON lists every member and can exceed ARG_MAX, so API responses
 # go through files instead of the environment.
 API_DIR=$(mktemp -d "${TMPDIR:-/tmp}/cursor-usage-5m-api.XXXXXX") || error_exit "mktemp failed"
-trap 'rm -rf "$API_DIR"' EXIT INT HUP TERM
 printf '%s' "$STRIPE" > "$API_DIR/stripe.json"
 printf '%s' "$USAGE" > "$API_DIR/usage.json"
 if [ -n "$SPEND_JSON" ]; then

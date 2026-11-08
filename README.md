@@ -5,7 +5,7 @@ A macOS menu bar plugin and a terminal report for your Cursor usage, from one sh
 - **Menu bar.** Shows how much of this billing cycle you have used. After the first 10% of the cycle, the dot follows your pace projected out to reset day: green under 50%, yellow from 50–79%, red at 80% and above. Percent plans, request quotas, and usage-based spend (the bar reads `$82/$1000`) all use the same script.
 - **The dropdown.** Progress bars, the reset countdown, whether this pace runs out before reset, how much room is left per day, 14-day activity, your account, and the AI share of the last commit.
 - **Your existing login.** The plugin reads the Cursor session on this Mac. On newer Cursor builds the token is encrypted in the login Keychain, so the first run asks you to let `security` read **Cursor Safe Storage**.
-- **One script.** An executable shell script, plus the `bash`, `python3`, `sqlite3`, and `curl` that ship with macOS. Clone it to `~/cursor-usage` and symlink the plugin. `git -C ~/cursor-usage pull` updates the menu bar and the report together.
+- **One script.** An executable shell script. It uses `bash`, `sqlite3`, and `curl`, which ship with macOS, and `python3` from the Xcode Command Line Tools. Clone it to `~/cursor-usage` and symlink the plugin. `git -C ~/cursor-usage pull` updates the menu bar and the report together.
 - **A closer look.** `bash ~/cursor-usage/generate-report.sh` prints the billing cycle, token distribution, daily activity, conversations, and AI attribution as colored ASCII in the terminal.
 
 ## Demo
@@ -43,7 +43,7 @@ Data sources and metrics are listed in [docs/data-sources.md](docs/data-sources.
 
 ## Installation
 
-You need macOS Catalina 10.15 or later, Cursor installed and signed in at least once, and [SwiftBar](https://github.com/swiftbar/SwiftBar).
+You need macOS Catalina 10.15 or later, Cursor installed and signed in at least once, the Xcode Command Line Tools (`xcode-select --install`), and [SwiftBar](https://github.com/swiftbar/SwiftBar).
 
 Install SwiftBar if it is not already there:
 
@@ -95,6 +95,16 @@ mv ~/swiftbar-plugins/cursor-usage.5m.sh ~/swiftbar-plugins/cursor-usage.1h.sh  
 
 Supported suffixes: `s` (seconds), `m` (minutes), `h` (hours), `d` (days).
 
+## Privacy
+
+The script reads the Cursor session already stored on this Mac and sends it only to `cursor.com`. It does not store the token, and it does not send it anywhere else. Passwords are never read or transmitted.
+
+On a team plan, `get-team-spend` returns every member's email and spend. The script keeps the signed-in account and deletes the response with its other temporary files.
+
+The numbers come from the same dashboard endpoints the Cursor website uses. Those endpoints are not a published API and can change without notice.
+
+This project is independent of Cursor and Anysphere.
+
 ## Troubleshooting
 
 ### Menu bar shows a red dot with "err"
@@ -109,7 +119,7 @@ Click it to see the error in the dropdown. Common causes:
 
 ### Keychain prompt
 
-Newer Cursor builds encrypt the stored login token (setting `cursor.storage.authTokenEncryptionAtRest`). To decrypt it, the plugin reads the **Cursor Safe Storage** key from your login Keychain, so the first run shows a prompt asking to let `security` access it. Enter your login password and choose **Always Allow**; with **Allow**, the prompt returns on every refresh. Some Macs have two **Cursor Safe Storage** items (accounts `Cursor` and `Cursor Key`); if the first one doesn't decrypt the token, a second prompt appears for the other.
+Newer Cursor builds encrypt the stored login token (setting `cursor.storage.authTokenEncryptionAtRest`). To decrypt it, the plugin reads the **Cursor Safe Storage** key from your login Keychain, so the first run shows a prompt asking to let `security` access it. Enter your login password. **Allow** asks again on every refresh. **Always Allow** stores the permission on `/usr/bin/security`, so any program on this Mac can then run `security` and read **Cursor Safe Storage** without a new prompt. Some Macs have two **Cursor Safe Storage** items (accounts `Cursor` and `Cursor Key`); if the first one doesn't decrypt the token, a second prompt appears for the other.
 
 ### Usage-based plans
 

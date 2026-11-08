@@ -3,7 +3,6 @@
 > **Purpose**: This document catalogs all data sources from Cursor's local SQLite database
 > and web dashboard APIs used by the cursor-usage scripts. It serves as a reference for
 > developers working on enhancements.
-> Load this file as context when working on cursor-usage changes.
 
 ## What the Scripts Show
 
@@ -13,6 +12,7 @@
 - **Aggregate token count** for the billing cycle
 - **On-demand spend**: dollars used / limit (team plans)
 - **Plan type, email, billing cycle dates**
+- **AI share of the last commit**, when `aiCodeTracking.recentCommit` has `aiPercentage`
 
 ### Terminal report ([generate-report.sh](../generate-report.sh))
 
@@ -184,11 +184,9 @@ Key: `freeBestOfN.promptCount` -- cumulative prompt count.
 
 ---
 
-## Available but Unused Metrics
+## AI share of the last commit (Source A -- global DB)
 
-These data sources exist but are not currently used by either script.
-
-### AI Code Attribution (Source A -- global DB)
+The menu bar reads this key and prints "Last commit: N% AI-generated" when `aiPercentage` is present. The terminal report does not.
 
 Key: `aiCodeTracking.recentCommit`
 
@@ -196,7 +194,13 @@ Key: `aiCodeTracking.recentCommit`
 {"commitHash": "...", "aiPercentage": "100.00", "composerLinesAdded": 300}
 ```
 
-Shows what fraction of the most recent commit was AI-generated.
+`aiPercentage` is the fraction of the most recent commit that was AI-generated.
+
+---
+
+## Available but Unused Metrics
+
+These fields come back from the team spend API. Neither script reads them.
 
 ### Team-Level Insights (Source B -- in API response but not parsed)
 
