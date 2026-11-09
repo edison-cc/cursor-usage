@@ -5,8 +5,8 @@ A macOS menu bar plugin and a terminal report for your Cursor usage, from one sh
 - **Menu bar.** Shows how much of this billing cycle you have used. After the first 10% of the cycle, the dot follows your pace projected out to reset day: green under 50%, yellow from 50–79%, red at 80% and above. Percent plans, request quotas, and usage-based spend (the bar reads `$82/$1000`) all use the same script.
 - **The dropdown.** Progress bars, the reset countdown, whether this pace runs out before reset, how much room is left per day, 14-day activity, your account, and the AI share of the last commit.
 - **Your existing login.** The plugin reads the Cursor session on this Mac. On newer Cursor builds the token is encrypted in the login Keychain, so the first run asks you to let `security` read **Cursor Safe Storage**.
-- **One script.** An executable shell script. It uses `bash`, `sqlite3`, and `curl`, which ship with macOS, and `python3` from the Xcode Command Line Tools. Clone it to `~/cursor-usage` and symlink the plugin. `git -C ~/cursor-usage pull` updates the menu bar and the report together.
-- **A closer look.** `bash ~/cursor-usage/generate-report.sh` prints the billing cycle, token distribution, daily activity, conversations, and AI attribution as colored ASCII in the terminal.
+- **Homebrew installation.** Install the menu bar plugin and terminal report together with `brew install edison-cc/tap/cursor-usage`.
+- **A closer look.** `cursor-usage-report` prints the billing cycle, token distribution, daily activity, conversations, and AI attribution as colored ASCII in the terminal.
 
 ## Demo
 
@@ -22,7 +22,7 @@ The dot color tracks that pace:
 Print a full usage report from the Cursor API and the local database:
 
 ```bash
-bash ~/cursor-usage/generate-report.sh
+cursor-usage-report
 ```
 
 The report covers the billing cycle, per-turn token distribution, daily activity, conversation analytics, AI code attribution, and account info. Output is colored ASCII in the terminal.
@@ -30,28 +30,47 @@ The report covers the billing cycle, per-turn token distribution, daily activity
 Save it to a file (colors turn off automatically when piped):
 
 ```bash
-bash ~/cursor-usage/generate-report.sh > report.txt
+cursor-usage-report > report.txt
 ```
 
 Turn colors off explicitly:
 
 ```bash
-bash ~/cursor-usage/generate-report.sh --no-color
+cursor-usage-report --no-color
 ```
 
 Data sources and metrics are listed in [docs/data-sources.md](docs/data-sources.md).
 
 ## Installation
 
-You need macOS Catalina 10.15 or later, Cursor installed and signed in at least once, the Xcode Command Line Tools (`xcode-select --install`), and [SwiftBar](https://github.com/swiftbar/SwiftBar).
+You need macOS, Cursor installed and signed in at least once, and the Xcode Command Line Tools (`xcode-select --install`). The scripts use macOS `bash`, `sqlite3`, and `curl`, plus `python3` from the Command Line Tools.
 
-Install SwiftBar if it is not already there:
+### Homebrew
+
+```bash
+brew install edison-cc/tap/cursor-usage
+```
+
+The terminal report is available as `cursor-usage-report`. For the menu bar plugin, install [SwiftBar](https://github.com/swiftbar/SwiftBar) if you need it. The Homebrew SwiftBar cask requires macOS 12 or later.
 
 ```bash
 brew install --cask swiftbar
 ```
 
-Clone the repo into your home directory and point SwiftBar at it:
+Link the plugin into your SwiftBar plugin directory. Use your existing directory if you already configured SwiftBar.
+
+```bash
+mkdir -p ~/swiftbar-plugins
+ln -s "$(brew --prefix)/opt/cursor-usage/share/cursor-usage/cursor-usage.5m.sh" ~/swiftbar-plugins/cursor-usage.5m.sh
+```
+
+If you are switching from a Git clone, remove your previous Cursor Usage symlink before creating the new one. Keep its filename if you customized the refresh interval.
+
+Update both scripts with `brew upgrade edison-cc/tap/cursor-usage`. The SwiftBar link continues to work after upgrades. To remove the package, delete the SwiftBar link you created and run `brew uninstall edison-cc/tap/cursor-usage`.
+
+### Install from source
+
+Clone the repo into your home directory and link the plugin into your SwiftBar plugin directory.
 
 ```bash
 git clone https://github.com/edison-cc/cursor-usage.git ~/cursor-usage
@@ -59,7 +78,7 @@ mkdir -p ~/swiftbar-plugins
 ln -sf ~/cursor-usage/cursor-usage.5m.sh ~/swiftbar-plugins/cursor-usage.5m.sh
 ```
 
-Later, update both the plugin and the report with `git -C ~/cursor-usage pull`.
+Run the report with `bash ~/cursor-usage/generate-report.sh`. Update both scripts with `git -C ~/cursor-usage pull`.
 
 ### Open it
 
