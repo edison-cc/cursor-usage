@@ -265,10 +265,12 @@ USAGE=$(api_get "https://www.cursor.com/api/usage")
 API_ERROR=$(printf '%s' "$USAGE" | api_error_message)
 [ -z "$API_ERROR" ] || error_exit "$API_ERROR"
 
-# Included-usage plans have no request quota. /api/usage then stays at 0/null;
-# the current period endpoint is what the dashboard percent comes from.
+# Included-usage plans have no request quota. /api/usage then stays at 0/null.
+# The dashboard card uses the weekly included cents from usage-status; the
+# current period endpoint is the fallback when that meter is absent.
 PERIOD=$(api_post "https://www.cursor.com/api/dashboard/get-current-period-usage" "{}")
 PLAN=$(api_post "https://www.cursor.com/api/dashboard/get-plan-info" "{}")
+STATUS=$(api_get "https://www.cursor.com/api/dashboard/v2/usage-status?scope=user")
 
 SPEND_JSON=""
 if [ -n "$TEAM_ID" ]; then
@@ -289,6 +291,7 @@ fi
 # and the second is written literally, which breaks JSON parsing.
 if [ -n "$PERIOD" ]; then printf '%s' "$PERIOD" > "$API_DIR/period.json"; else printf '%s' '{}' > "$API_DIR/period.json"; fi
 if [ -n "$PLAN" ]; then printf '%s' "$PLAN" > "$API_DIR/plan.json"; else printf '%s' '{}' > "$API_DIR/plan.json"; fi
+if [ -n "$STATUS" ]; then printf '%s' "$STATUS" > "$API_DIR/status.json"; else printf '%s' '{}' > "$API_DIR/status.json"; fi
 export CURSOR_USAGE_API_DIR="$API_DIR"
 
 DAILY_STATS=$(sqlite3 "$DB" \
@@ -382,8 +385,122 @@ elif "MONTH" in usage_period:
     period_label = "monthly"
 else:
     period_label = ""
+
+def parse_iso(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
+
+def shown_included_pct(pct):
+    # The dashboard floors the included-usage integer. A fraction under 1%
+    # still shows as 1%, so a little usage does not read as none.
+    bounded = min(100.0, max(0.0, pct))
+    if 0 < bounded < 1:
+        return 1
+    return int(bounded)
+
+# Same names and order as the dashboard usage card.
+PRODUCT_LABELS = {
+    "chat": "Chat",
+    "imagine": "Imagine",
+    "grok-build": "Grok Build",
+    "voice": "Voice",
+    "api": "API",
+    "app-builder": "App Builder",
+    "automations": "Automations",
+    "plugins": "Plugins",
+    "grok-bot": "Grok Bot",
+    "cursor": "Cursor",
+    "bugbot": "Bugbot",
+    "other": "Other",
+}
+PRODUCT_ALIASES = {
+    "grok-chat": "chat",
+    "grok-imagine": "imagine",
+    "grok-build": "grok-build",
+    "grok-voice": "voice",
+    "grok-api": "api",
+    "api": "api",
+    "grok-app-builder": "app-builder",
+    "grok-tasks": "automations",
+    "grok-plugins": "plugins",
+    "grok-bot": "grok-bot",
+    "sand": "grok-bot",
+    "cursor": "cursor",
+    "bugbot": "bugbot",
+}
+PRODUCT_ORDER = list(PRODUCT_LABELS)
+
+def included_product_split(percent_used, by_product):
+    # Largest remainder against the floored total, so the labels add up to it.
+    totals = {}
+    for item in by_product or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            cents = float(item.get("cents"))
+        except (TypeError, ValueError):
+            continue
+        if cents <= 0:
+            continue
+        key = PRODUCT_ALIASES.get(str(item.get("product") or ""), "other")
+        totals[key] = totals.get(key, 0.0) + cents
+    total_cents = sum(totals.values())
+    shown = shown_included_pct(percent_used)
+    if shown <= 0 or total_cents <= 0:
+        return []
+    rows = []
+    for key, cents in totals.items():
+        share = cents / total_cents * shown
+        floored = int(share)
+        rows.append({"product": key, "percent": floored, "remainder": share - floored})
+    leftover = shown - sum(row["percent"] for row in rows)
+    for row in sorted(rows, key=lambda row: row["remainder"], reverse=True):
+        if leftover <= 0:
+            break
+        row["percent"] += 1
+        leftover -= 1
+    visible = [row for row in rows if row["percent"] > 0]
+    visible.sort(key=lambda row: (
+        row["product"] == "other",
+        -row["percent"],
+        PRODUCT_ORDER.index(row["product"]) if row["product"] in PRODUCT_ORDER else len(PRODUCT_ORDER),
+    ))
+    return [(PRODUCT_LABELS.get(row["product"], "Other"), row["percent"]) for row in visible]
+
+# The dashboard card divides weekly included cents. The period percent is the
+# fallback when that meter is absent.
+status = load_api_json("status.json")
+weekly = status.get("weeklyIncludedUsage") if isinstance(status, dict) else None
+weekly_state = status.get("weeklyIncludedStatus") if isinstance(status, dict) else None
+weekly_status = weekly_state.get("status") if isinstance(weekly_state, dict) else None
+product_usage = status.get("weeklyIncludedUsageByProduct") if isinstance(status, dict) else None
+if not isinstance(product_usage, list):
+    product_usage = []
+if weekly_status == "metered" and isinstance(weekly, dict):
+    try:
+        used_cents = float(weekly.get("usedCents"))
+        budget_cents = float(weekly.get("budgetCents"))
+    except (TypeError, ValueError):
+        used_cents = budget_cents = None
+    if budget_cents and budget_cents > 0 and used_cents is not None:
+        included_pct = 100.0 * max(0.0, used_cents) / budget_cents
+        weekly_start = parse_iso(weekly.get("periodStart"))
+        weekly_end = parse_iso(weekly.get("resetsAt"))
+        if weekly_start and weekly_end:
+            period_start = weekly_start
+            period_end = weekly_end
+        period_label = "weekly"
+
 # Request-quota and team-spend plans keep their existing meter.
 has_included = included_pct is not None and not total and not has_spend
+included_split = included_product_split(included_pct, product_usage) if has_included else []
 
 def pct_color(pct):
     if pct >= 80:
@@ -659,7 +776,7 @@ def meter(title, value_line, color, bar):
 # Menu bar title. The dot follows the projected end-of-cycle usage.
 if has_included:
     dot = pct_dot(signal_pct(included_pct))
-    bar_text = f"{dot} {included_pct:.0f}%"
+    bar_text = f"{dot} {shown_included_pct(included_pct)}%"
 elif has_spend:
     dot = pct_dot(signal_pct(spend_pct))
     req_prefix = f"{total} · " if total else ""
@@ -678,7 +795,7 @@ print("---")
 show_requests = bool(total) or (not has_spend and not has_included)
 if has_included:
     inc_color = pct_color(included_pct)
-    used_shown = int(round(included_pct))
+    used_shown = shown_included_pct(included_pct)
     left_shown = max(0, 100 - used_shown)
     value_line = f"{used_shown}% used · {left_shown}% left"
     if included_dollars_left is not None:
@@ -690,6 +807,9 @@ if has_included:
     else:
         inc_title = "Included usage"
     meter(inc_title, value_line, inc_color, bar20(included_pct))
+    if included_split:
+        split_line = " · ".join(f"{label} {pct}%" for label, pct in included_split)
+        print(f"{split_line} | size=12 font=Menlo")
 if show_requests:
     req_used_shown = int(round(req_pct))
     req_left_shown = max(0, 100 - req_used_shown)
@@ -721,8 +841,8 @@ if forecast_text:
     print(f"{forecast_text} | color={forecast_color} size=12")
 if daily_room:
     print(f"{daily_room} | color=#888888 size=12")
-if has_included and auto_pct is not None and api_pct is not None:
-    print(f"Auto {auto_pct:.0f}% · API {api_pct:.0f}% | size=12 font=Menlo")
+if has_included and not included_split and auto_pct is not None and api_pct is not None:
+    print(f"Auto {shown_included_pct(auto_pct)}% · API {shown_included_pct(api_pct)}% | size=12 font=Menlo")
 
 print("---")
 

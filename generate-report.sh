@@ -175,10 +175,12 @@ if [ -n "$API_ERROR" ]; then
   exit 1
 fi
 
-# Included-usage plans have no request quota. /api/usage then stays at 0/null;
-# the current period endpoint is what the dashboard percent comes from.
+# Included-usage plans have no request quota. /api/usage then stays at 0/null.
+# The dashboard card uses the weekly included cents from usage-status; the
+# current period endpoint is the fallback when that meter is absent.
 PERIOD=$(api_post "https://www.cursor.com/api/dashboard/get-current-period-usage" "{}")
 PLAN=$(api_post "https://www.cursor.com/api/dashboard/get-plan-info" "{}")
+STATUS=$(api_get "https://www.cursor.com/api/dashboard/v2/usage-status?scope=user")
 
 SPEND_JSON=""
 if [ -n "$TEAM_ID" ]; then
@@ -199,6 +201,7 @@ fi
 # and the second is written literally, which breaks JSON parsing.
 if [ -n "$PERIOD" ]; then printf '%s' "$PERIOD" > "$API_DIR/period.json"; else printf '%s' '{}' > "$API_DIR/period.json"; fi
 if [ -n "$PLAN" ]; then printf '%s' "$PLAN" > "$API_DIR/plan.json"; else printf '%s' '{}' > "$API_DIR/plan.json"; fi
+if [ -n "$STATUS" ]; then printf '%s' "$STATUS" > "$API_DIR/status.json"; else printf '%s' '{}' > "$API_DIR/status.json"; fi
 export CURSOR_USAGE_API_DIR="$API_DIR"
 
 export EMAIL DB
@@ -322,7 +325,120 @@ elif "MONTH" in usage_period:
     period_label = "monthly"
 else:
     period_label = ""
+
+def parse_iso(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
+
+def shown_included_pct(pct):
+    # The dashboard floors the included-usage integer. A fraction under 1%
+    # still shows as 1%, so a little usage does not read as none.
+    bounded = min(100.0, max(0.0, pct))
+    if 0 < bounded < 1:
+        return 1
+    return int(bounded)
+
+PRODUCT_LABELS = {
+    "chat": "Chat",
+    "imagine": "Imagine",
+    "grok-build": "Grok Build",
+    "voice": "Voice",
+    "api": "API",
+    "app-builder": "App Builder",
+    "automations": "Automations",
+    "plugins": "Plugins",
+    "grok-bot": "Grok Bot",
+    "cursor": "Cursor",
+    "bugbot": "Bugbot",
+    "other": "Other",
+}
+PRODUCT_ALIASES = {
+    "grok-chat": "chat",
+    "grok-imagine": "imagine",
+    "grok-build": "grok-build",
+    "grok-voice": "voice",
+    "grok-api": "api",
+    "api": "api",
+    "grok-app-builder": "app-builder",
+    "grok-tasks": "automations",
+    "grok-plugins": "plugins",
+    "grok-bot": "grok-bot",
+    "sand": "grok-bot",
+    "cursor": "cursor",
+    "bugbot": "bugbot",
+}
+PRODUCT_ORDER = list(PRODUCT_LABELS)
+
+def included_product_split(percent_used, by_product):
+    # Largest remainder against the floored total, so the labels add up to it.
+    totals = {}
+    for item in by_product or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            cents = float(item.get("cents"))
+        except (TypeError, ValueError):
+            continue
+        if cents <= 0:
+            continue
+        key = PRODUCT_ALIASES.get(str(item.get("product") or ""), "other")
+        totals[key] = totals.get(key, 0.0) + cents
+    total_cents = sum(totals.values())
+    shown = shown_included_pct(percent_used)
+    if shown <= 0 or total_cents <= 0:
+        return []
+    rows = []
+    for key, cents in totals.items():
+        share = cents / total_cents * shown
+        floored = int(share)
+        rows.append({"product": key, "percent": floored, "remainder": share - floored})
+    leftover = shown - sum(row["percent"] for row in rows)
+    for row in sorted(rows, key=lambda row: row["remainder"], reverse=True):
+        if leftover <= 0:
+            break
+        row["percent"] += 1
+        leftover -= 1
+    visible = [row for row in rows if row["percent"] > 0]
+    visible.sort(key=lambda row: (
+        row["product"] == "other",
+        -row["percent"],
+        PRODUCT_ORDER.index(row["product"]) if row["product"] in PRODUCT_ORDER else len(PRODUCT_ORDER),
+    ))
+    return [(PRODUCT_LABELS.get(row["product"], "Other"), row["percent"]) for row in visible]
+
+# The dashboard card divides weekly included cents. The period percent is the
+# fallback when that meter is absent.
+status = load_api_json("status.json")
+weekly = status.get("weeklyIncludedUsage") if isinstance(status, dict) else None
+weekly_state = status.get("weeklyIncludedStatus") if isinstance(status, dict) else None
+weekly_status = weekly_state.get("status") if isinstance(weekly_state, dict) else None
+product_usage = status.get("weeklyIncludedUsageByProduct") if isinstance(status, dict) else None
+if not isinstance(product_usage, list):
+    product_usage = []
+if weekly_status == "metered" and isinstance(weekly, dict):
+    try:
+        used_cents = float(weekly.get("usedCents"))
+        budget_cents = float(weekly.get("budgetCents"))
+    except (TypeError, ValueError):
+        used_cents = budget_cents = None
+    if budget_cents and budget_cents > 0 and used_cents is not None:
+        included_pct = 100.0 * max(0.0, used_cents) / budget_cents
+        weekly_start = parse_iso(weekly.get("periodStart"))
+        weekly_end = parse_iso(weekly.get("resetsAt"))
+        if weekly_start and weekly_end:
+            period_start = weekly_start
+            period_end = weekly_end
+        period_label = "weekly"
+
 has_included = included_pct is not None and not total and not has_spend
+included_split = included_product_split(included_pct, product_usage) if has_included else []
 
 # ---------------------------------------------------------------------------
 # Load local DB data
@@ -497,8 +613,11 @@ if has_included:
     inc_label = "Included Usage"
     if period_label:
         inc_label += f" ({period_label})"
-    print(f"  {inc_label:<20}{BOLD}{ic}{included_pct:.0f}%{RESET}")
-    print(f"  [{bar(included_pct, 30, ic)}] {ic}{included_pct:.0f}%{RESET}")
+    shown_pct = shown_included_pct(included_pct)
+    print(f"  {inc_label:<20}{BOLD}{ic}{shown_pct}%{RESET}")
+    print(f"  [{bar(included_pct, 30, ic)}] {ic}{shown_pct}%{RESET}")
+    if included_split:
+        print("  " + " · ".join(f"{label} {pct}%" for label, pct in included_split))
 
 if show_requests:
     rc = pct_color(req_pct)

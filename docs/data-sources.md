@@ -28,7 +28,8 @@ Everything the plugin shows, plus:
 ### Data sources used
 
 - `GET /api/usage` -- aggregate requests and tokens per billing cycle. Request-quota plans only; included-usage plans return `maxRequestUsage: null` and zeros.
-- `POST /api/dashboard/get-current-period-usage` -- included-usage percent (`planUsage.totalPercentUsed`) and the current period window. This is the dashboard "You've used N% of your included usage" figure.
+- `POST /api/dashboard/get-current-period-usage` -- included-usage percent (`planUsage.totalPercentUsed`) and the current period window. Fallback when the weekly meter below is absent.
+- `GET /api/dashboard/v2/usage-status?scope=user` -- the dashboard usage card. It divides `weeklyIncludedUsage.usedCents` by `budgetCents`, floors that percent (and shows 1% when it is above 0 and below 1), then splits `weeklyIncludedUsageByProduct` with the largest remainder so Grok Bot, Cursor, and the other labels add up to that integer. Pace and the progress bar still use the raw percent.
 - `POST /api/dashboard/get-plan-info` -- plan name and included-usage period (`INCLUDED_USAGE_PERIOD_WEEKLY` / monthly) plus when that allowance resets.
 - `GET /api/auth/stripe` -- plan info, team membership
 - `POST /api/dashboard/get-team-spend` -- per-member spend (team only)
@@ -68,7 +69,8 @@ Electron `safeStorage` blob, which must be decrypted first:
 A rejected session returns HTTP 401 with `{"error":"not_authenticated", ...}`.
 
 - `GET /api/usage` -- aggregate requests and tokens per billing cycle. Request-quota plans only; included-usage plans return `maxRequestUsage: null` and zeros.
-- `POST /api/dashboard/get-current-period-usage` -- included-usage percent (`planUsage.totalPercentUsed`) and the current period window. This is the dashboard "You've used N% of your included usage" figure.
+- `POST /api/dashboard/get-current-period-usage` -- included-usage percent (`planUsage.totalPercentUsed`) and the current period window. Fallback when the weekly meter below is absent.
+- `GET /api/dashboard/v2/usage-status?scope=user` -- the dashboard usage card. It divides `weeklyIncludedUsage.usedCents` by `budgetCents`, floors that percent (and shows 1% when it is above 0 and below 1), then splits `weeklyIncludedUsageByProduct` with the largest remainder so Grok Bot, Cursor, and the other labels add up to that integer. Pace and the progress bar still use the raw percent.
 - `POST /api/dashboard/get-plan-info` -- plan name and included-usage period (`INCLUDED_USAGE_PERIOD_WEEKLY` / monthly) plus when that allowance resets.
 - `GET /api/auth/stripe` -- plan info, team membership
 - `POST /api/dashboard/get-team-spend` -- per-member spend (team only)
